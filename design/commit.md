@@ -49,7 +49,8 @@ commitMutationEffects 会遍历 effectList，对每个 `Fiber` 节点执行如�
 
 - 调用 `commitLifeCycles`， 
   - 对于函数组件：调用 `commitHookEffectListMount`，同步执行 `useLayoutEffect` 的回调；然后调用 `schedulePassiveEffects`，执行 `pendingPassiveHookEffectsUnmount.push` 和 `pendingPassiveHookEffectsMount.push`，调度`useEffect` 的销毁与回调函数
-  - 对于类组件：会通过判断 `current === null` 区分是 `mount` 还是 `update`，调用 `componentDidMount` (opens new window)或 `componentDidUpdate`
+  - 对于类组件：会通过判断 `current === null` 区分是 `mount` 还是 `update`，调用 `componentDidMount` (opens new window)或 `componentDidUpdate`; 触发 `this.setState`的第二个参数指定的回调函数
+  - 对于 `HostRoot`: 会触发 `ReactDOM.render` 第三个参数指定的回调函数
 
 - 赋值 `ref`
 
