@@ -198,7 +198,7 @@ type Fiber = {
 
 ## ReactElement
 ```ts
-ReactElement = {
+type ReactElement = {
   $$typeof: any,
   type: any,
   key: any,
@@ -213,4 +213,59 @@ ReactElement = {
   _shadowChildren: any,
   _source: Source,
 }
+```
+
+
+
+
+## Hook
+
+```ts
+type Hook = {
+  memoizedState: any
+  // 第一个未被应用的 update（baseQueue.next） 之前的 state
+  // 假设当前 state = 1，相继触发三次 dispatchAction，创建三个 update： Q1 Q2 Q3
+  // 其中 Q1 和 Q2 优先级不够被当前更新跳过，而 Q3 会被应用
+  // 则 baseQueue 对应的链表如下：
+  //      Q1 -> Q2 -> Q3
+  // 此时，memoizedState 为按顺序计算 Q1、Q2、Q3 之后得到的 state
+  // baseState 是 Q1 之前的 state 即 1
+  baseState: any
+  // baseQueue 表示优先级不够未被应用的 update 链表
+  // 指向的是最后一个 update
+  // 注意：为了保证执行顺序，链表上保留了已经应用的中间态的 update
+  baseQueue: Update<any, any> | null
+  // 主要存储 pending update
+  queue: UpdateQueue<any, any> | null
+  next: Hook | null
+};
+
+// Update 是一个环状链表
+type Update<S, A> = {
+  lane: Lane
+  action: A
+  eagerReducer: ((S, A) => S) | null
+  // 待更新后的 state？
+  eagerState: S | null
+  next: Update<S, A>
+  priority?: ReactPriorityLevel
+};
+
+// UpdateQueue.pending 指向最后一个未处理的 update
+// UpdateQueue.pending.next 指向第一个未处理的 update
+type UpdateQueue<S, A> = {
+  pending: Update<S, A> | null
+  interleaved: Update<S, A> | null
+  dispatch: (A => mixed) | null
+  lastRenderedReducer: ((S, A) => S) | null
+  lastRenderedState: S | null
+};
+
+type Effect = {
+  tag: HookFlags
+  create: () => (() => void) | void
+  destroy: (() => void) | void
+  deps: Array<mixed> | null
+  next: Effect
+};
 ```
