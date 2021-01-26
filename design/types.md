@@ -4,13 +4,16 @@
 ```ts
 type FiberRoot = {
   // The type of root (legacy, batched, concurrent, etc.)
+  // LegacyRoot, BlockingRoot, ConcurrentRoot
   tag: RootTag;
 
   // Any additional information from the host associated with this root.
+  // container dom 元素，即 ReactDOM.render() 的第二个参数
   containerInfo: any;
   // Used only by persistent updates.
   pendingChildren: any;
   // The currently active root fiber. This is the mutable root of the tree.
+  // 指向 rootFiber
   current: Fiber;
 
   pingCache: WeakMap<Wakeable, Set<mixed>> | Map<Wakeable, Set<mixed>> | null;
@@ -65,6 +68,7 @@ type Fiber = {
   // minimize the number of objects created during the initial render.
 
   // Tag identifying the type of fiber.
+  // FunctionComponent, ClassComponent, HostRoot, HostComponent....
   tag: WorkTag;
 
   // Unique identifier of this child.
@@ -78,6 +82,8 @@ type Fiber = {
   type: any;
 
   // The local state associated with this fiber.
+  // rootFiber: stateNode = FiberRoot
+  // 其余 fiber: 
   stateNode: any;
 
   // Conceptual aliases
@@ -90,10 +96,13 @@ type Fiber = {
   // This is effectively the parent, but there can be multiple parents (two)
   // so this is only the parent of the thing we're currently processing.
   // It is conceptually the same as the return address of a stack frame.
+  // 父级 fiber
   return: Fiber | null;
 
   // Singly Linked List Tree Structure.
+  // 第一个子 fiber
   child: Fiber | null;
+  // 兄弟 fiber
   sibling: Fiber | null;
   index: number;
 
@@ -101,7 +110,7 @@ type Fiber = {
   // I'll avoid adding an owner field for prod and model that as functions.
   ref:
     | null
-    | (((handle: mixed) => void) & {_stringRef: ?string, ...})
+    | (((handle: mixed) => void) & {_stringRef?: string, ...})
     | RefObject;
 
   // Input is the data coming into process this fiber. Arguments. Props.
@@ -112,6 +121,9 @@ type Fiber = {
   updateQueue: mixed;
 
   // The state used to create the output
+  // rootFiber: memoizedState = { element: ** (ReactDOM.render 的第一个参数) }, 
+  // 函数组件 fiber: memoizedState = hook
+  // 类组件 fiber: 
   memoizedState: any;
 
   // Dependencies (contexts, events) for this fiber, if it has any
@@ -126,7 +138,7 @@ type Fiber = {
   mode: TypeOfMode;
 
   // Effect
-  flags: Flags;
+  flags: Flags; // Placement、Update....
   subtreeFlags: Flags;
   deletions: Array<Fiber> | null;
 
@@ -145,6 +157,7 @@ type Fiber = {
   // This is a pooled version of a Fiber. Every fiber that gets updated will
   // eventually have a pair. There are cases when we can clean up pairs to save
   // memory if we need to.
+  // workInProgress fiber
   alternate: Fiber | null;
 
   // Time spent rendering this Fiber and its descendants for the current update.
@@ -180,5 +193,24 @@ type Fiber = {
 
   // Used to verify that the order of hooks does not change between renders.
   _debugHookTypes?: Array<HookType> | null;
+}
+```
+
+## ReactElement
+```ts
+ReactElement = {
+  $$typeof: any,
+  type: any,
+  key: any,
+  ref: any,
+  props: any,
+  // ReactFiber
+  _owner: any,
+
+  // __DEV__
+  _store: {validated: boolean, ...},
+  _self: React$Element<any>,
+  _shadowChildren: any,
+  _source: Source,
 }
 ```
