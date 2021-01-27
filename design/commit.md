@@ -12,7 +12,7 @@
 注：`pendingPassiveHookEffectsUnmount` 和 `pendingPassiveHookEffectsMount` 数组项是二维数组，第一项为 `effect` 对象，第二项为 `fiber`。向数组内 `push` 数据的操作发生在 layout 阶段 `commitLayoutEffectOnFiber` 方法内部的 `schedulePassiveEffects` 方法中
 
 #### `commitBeforeMutationEffects`
-**关键词**: `getSnapshotBeforeUpdate`
+> **关键词**: `getSnapshotBeforeUpdate`
 
 主要有两个操作：
 1. 调用 `commitBeforeMutationLifeCycles` 方法，触发类组件的 `getSnapshotBeforeUpdate` 的调用
@@ -28,7 +28,7 @@
 
 
 #### `commitMutationEffects`
-**关键词**：`ref.current = null`, `clean callback of useLayoutEffect`,  `componentWillUnmount`
+> **关键词**：`ref.current = null`, `useLayoutEffect 清理函数`,  `componentWillUnmount`
 
 commitMutationEffects 会遍历 effectList，对每个 `Fiber` 节点执行如下三个操作：
 
@@ -44,14 +44,20 @@ commitMutationEffects 会遍历 effectList，对每个 `Fiber` 节点执行如�
 ### layout阶段（执行DOM操作后）
 #### `commitLayoutEffects` => `commitLifeCycles`
 
-**关键词**：`componentDidMount`, `componentDidUpdate`, `useLayoutEffect`, `调度 useEffect 的销毁函数和回调函数`, 
+> **关键词**：`componentDidMount`, `componentDidUpdate`, `useLayoutEffect`, `调度 useEffect 的销毁函数和回调函数`, 
 `ref`
 
-- 调用 `commitLifeCycles`， 
-  - 对于函数组件：调用 `commitHookEffectListMount`，同步执行 `useLayoutEffect` 的回调；然后调用 `schedulePassiveEffects`，执行 `pendingPassiveHookEffectsUnmount.push` 和 `pendingPassiveHookEffectsMount.push`，调度`useEffect` 的销毁与回调函数
-  - 对于类组件：会通过判断 `current === null` 区分是 `mount` 还是 `update`，调用 `componentDidMount` (opens new window)或 `componentDidUpdate`; 触发 `this.setState`的第二个参数指定的回调函数
-  - 对于 `HostRoot`: 会触发 `ReactDOM.render` 第三个参数指定的回调函数
+**函数组件**：
+1. 同步执行 `useLayoutEffect` 的回调（通过调用 `commitHookEffectListMount`）
+2. 然后调度`useEffect` 的销毁与回调函数（通过调用 `schedulePassiveEffects`，执行 `pendingPassiveHookEffectsUnmount.push` 和 `pendingPassiveHookEffectsMount.push`）
+3. 赋值 `ref`
 
-- 赋值 `ref`
+**类组件**：
+1. 会通过判断 `current === null` 区分是 `mount` 还是 `update`，调用 `componentDidMount` 或 `componentDidUpdate`
+2. 触发 `this.setState` 第二个参数指定的回调函数
+3. 赋值 `ref`
+
+**HostRoot**：
+1. 触发 `ReactDOM.render` 第三个参数指定的回调函数
 
 #### `onCommitRoot`

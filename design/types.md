@@ -118,7 +118,7 @@ type Fiber = {
   memoizedProps: any; // The props used to create the output.
 
   // A queue of state updates and callbacks.
-  updateQueue: mixed;
+  updateQueue: UpdateQueue<any>;
 
   // The state used to create the output
   // rootFiber: memoizedState = { element: ** (ReactDOM.render 的第一个参数) }, 
@@ -194,6 +194,35 @@ type Fiber = {
   // Used to verify that the order of hooks does not change between renders.
   _debugHookTypes?: Array<HookType> | null;
 }
+
+type Update<State> = {
+  // TODO: Temporary field. Will remove this by storing a map of
+  // transition -> event time on the root.
+  eventTime: number
+  lane: Lane
+
+  tag: UpdateState | ReplaceState | ForceUpdate | CaptureUpdate
+  // 调用 setState 传递的参数，当为函数时，接受 (prevState, nextProps) 参数
+  payload: any
+  callback: (() => mixed) | null
+
+  next: Update<State> | null
+};
+
+export type SharedQueue<State> = {
+  pending: Update<State> | null
+  interleaved: Update<State> | null
+};
+
+export type UpdateQueue<State> = {
+  baseState: State
+  firstBaseUpdate: Update<State> | null
+  lastBaseUpdate: Update<State> | null
+  shared: SharedQueue<State>
+  // 有 callback （this.setState 的第二个参数或者 ReactDom.render 的第三个参数） 的 update 对象列表
+  // callback 在 commit 的 layout阶段被执行 （通过调用 commitUpdateQueue）
+  effects: Array<Update<State>> | null
+};
 ```
 
 ## ReactElement
