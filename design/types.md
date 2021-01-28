@@ -68,7 +68,7 @@ type Fiber = {
   // minimize the number of objects created during the initial render.
 
   // Tag identifying the type of fiber.
-  // FunctionComponent, ClassComponent, HostRoot, HostComponent....
+  // FunctionComponent, ClassComponent, HostRoot, HostComponent, LazyComponent....
   tag: WorkTag;
 
   // Unique identifier of this child.
@@ -79,6 +79,7 @@ type Fiber = {
   elementType: any;
 
   // The resolved function/class/ associated with this fiber.
+  // 除了 LazyComponent 的 `type !== elementType`，其余都相等
   type: any;
 
   // The local state associated with this fiber.
@@ -229,6 +230,9 @@ export type UpdateQueue<State> = {
 ```ts
 type ReactElement = {
   $$typeof: any,
+  // node tag: 'div' or 'span'...
+  // React component type: a class or a function
+  // React fragment type
   type: any,
   key: any,
   ref: any,
