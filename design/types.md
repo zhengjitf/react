@@ -84,6 +84,7 @@ type Fiber = {
 
   // The local state associated with this fiber.
   // rootFiber: stateNode = FiberRoot
+  // 类组件 Fiber: stateNode = instance
   // 其余 fiber: 
   stateNode: any;
 
