@@ -80,12 +80,13 @@ type Fiber = {
 
   // The resolved function/class/ associated with this fiber.
   // 除了 LazyComponent 的 `type !== elementType`，其余都相等
+  // 对于 FunctionComponent，指函数本身，对于 ClassComponent，指 class，对于HostComponent，指 DOM 节点 tagName
   type: any;
 
   // The local state associated with this fiber.
   // rootFiber: stateNode = FiberRoot
   // 类组件 Fiber: stateNode = instance
-  // 其余 fiber: 
+  // 其余 fiber: 真实 DOM 节点
   stateNode: any;
 
   // Conceptual aliases
@@ -153,6 +154,7 @@ type Fiber = {
   firstEffect: Fiber | null;
   lastEffect: Fiber | null;
 
+  // 调度优先级相关
   lanes: Lanes;
   childLanes: Lanes;
 
@@ -225,6 +227,19 @@ export type UpdateQueue<State> = {
   // callback 在 commit 的 layout阶段被执行 （通过调用 commitUpdateQueue）
   effects: Array<Update<State>> | null
 };
+
+type ContextDependency<T> = {
+  context: ReactContext<T>,
+  observedBits: number,
+  next: ContextDependency<mixed> | null,
+  ...
+};
+
+type Dependencies = {
+  lanes: Lanes,
+  firstContext: ContextDependency<mixed> | null,
+  ...
+}
 ```
 
 ## ReactElement
