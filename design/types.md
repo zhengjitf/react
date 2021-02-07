@@ -121,7 +121,7 @@ type Fiber = {
   memoizedProps: any; // The props used to create the output.
 
   // A queue of state updates and callbacks.
-  updateQueue: UpdateQueue<any>;
+  updateQueue: UpdateQueue<any> | FunctionComponentUpdateQueue;
 
   // The state used to create the output
   // rootFiber: memoizedState = { element: ** (ReactDOM.render 的第一个参数) }, 
@@ -218,7 +218,7 @@ export type SharedQueue<State> = {
   interleaved: Update<State> | null
 };
 
-export type UpdateQueue<State> = {
+type UpdateQueue<State> = {
   baseState: State
   firstBaseUpdate: Update<State> | null
   lastBaseUpdate: Update<State> | null
@@ -226,6 +226,19 @@ export type UpdateQueue<State> = {
   // 有 callback （this.setState 的第二个参数或者 ReactDom.render 的第三个参数） 的 update 对象列表
   // callback 在 commit 的 layout阶段被执行 （通过调用 commitUpdateQueue）
   effects: Array<Update<State>> | null
+};
+
+type Effect = {
+  tag: HookFlags
+  create: () => (() => void) | void
+  destroy: (() => void) | void
+  deps: Array<mixed> | null
+  // Circular
+  next: Effect
+};
+
+type FunctionComponentUpdateQueue = {
+  lastEffect: Effect | null
 };
 
 type ContextDependency<T> = {

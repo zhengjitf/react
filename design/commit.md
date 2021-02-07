@@ -18,7 +18,7 @@
 1. 调用 `commitBeforeMutationLifeCycles` 方法，触发类组件的 `getSnapshotBeforeUpdate` 的调用
 2. 如果有 `passive effects`, 调度 `flushPassiveEffects` （`scheduleCallback(..., () => flushPassiveEffects())`）
 
-注：整个useEffect异步调用分为三步：
+注：整个 `useEffect` 异步调用分为三步：
 
 1. `before mutation` 阶段在 `scheduleCallback` 中调度 `flushPassiveEffects`
 2. `layout` 阶段之后将 `effectList` 赋值给 `rootWithPendingPassiveEffects`

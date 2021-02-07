@@ -6,3 +6,8 @@ React16架构可以分为三层：
 - Renderer（渲染器）—— 如 `react-dom`，对应 `commit` 阶段, 负责将变化的组件渲染到页面上
 
 
+流程
+```bash
+scheduleUpdateOnFiber >> performSyncWorkOnRoot >> (renderRootSync >> workLoopSync >> performUnitOfWork >> (beginWork -> completeUnitOfWork)) -> commitRoot
+
+```
