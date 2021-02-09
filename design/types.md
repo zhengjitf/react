@@ -121,7 +121,10 @@ type Fiber = {
   memoizedProps: any; // The props used to create the output.
 
   // A queue of state updates and callbacks.
-  updateQueue: UpdateQueue<any> | FunctionComponentUpdateQueue;
+  updateQueue: 
+    | UpdateQueue<any> 
+    | FunctionComponentUpdateQueue 
+    | HostComponentUpdateQueue;
 
   // The state used to create the output
   // rootFiber: memoizedState = { element: ** (ReactDOM.render 的第一个参数) }, 
@@ -240,6 +243,10 @@ type Effect = {
 type FunctionComponentUpdateQueue = {
   lastEffect: Effect | null
 };
+
+type PropType = string
+type Payload = any
+type HostComponentUpdateQueue = [PropType, Payload, PropType, Payload, .....]
 
 type ContextDependency<T> = {
   context: ReactContext<T>,
