@@ -14,7 +14,13 @@
 #### `commitBeforeMutationEffects`
 > **关键词**: `getSnapshotBeforeUpdate`
 
-主要有两个操作：
+**类组件**：
+1. 调用 `getSnapshotBeforeUpdate`，将返回值挂载到实例的 `__reactInternalSnapshotBeforeUpdate` 属性上，以便使用
+
+**HostRoot**：
+1. 清空子节点
+
+<!-- 主要有两个操作：
 1. 调用 `commitBeforeMutationLifeCycles` 方法，触发类组件的 `getSnapshotBeforeUpdate` 的调用
 2. 如果有 `passive effects`, 调度 `flushPassiveEffects` （`scheduleCallback(..., () => flushPassiveEffects())`）
 
@@ -22,7 +28,7 @@
 
 1. `before mutation` 阶段在 `scheduleCallback` 中调度 `flushPassiveEffects`
 2. `layout` 阶段之后将 `effectList` 赋值给 `rootWithPendingPassiveEffects`
-3. `scheduleCallback` 触发 `flushPassiveEffects`，`flushPassiveEffects` 内部遍历 `rootWithPendingPassiveEffects`
+3. `scheduleCallback` 触发 `flushPassiveEffects`，`flushPassiveEffects` 内部遍历 `rootWithPendingPassiveEffects` -->
 
 ### mutation阶段（执行DOM操作）
 
@@ -30,7 +36,18 @@
 #### `commitMutationEffects`
 > **关键词**：`ref.current = null`, `useLayoutEffect 清理函数`,  `componentWillUnmount`
 
-commitMutationEffects 会遍历 effectList，对每个 `Fiber` 节点执行如下三个操作：
+**类组件**：
+1. 标记为删除的 `fiber` 会调用对应类组件的 `componentWillUnmount`
+2. 设置 `ref` 为 `null`
+3. 根据 `flags` 执行对应的 DOM 操作
+
+**函数组件**：
+1. 标记为删除的 `fiber` 会调用对应函数组件的 `useLayoutEffect` 的销毁函数
+2. 设置 `ref` 为 `null`
+3. 根据 `flags` 执行对应的 DOM 操作
+
+
+<!-- commitMutationEffects 会遍历 effectList，对每个 `Fiber` 节点执行如下三个操作：
 
 - 根据 ContentReset effectTag 重置文字节点
 - 设置 `ref` 为 `null`
@@ -39,7 +56,7 @@ commitMutationEffects 会遍历 effectList，对每个 `Fiber` 节点执行如�
 
 当Fiber节点含有Update effectTag，意味着该Fiber节点需要更新。调用的方法为commitWork，他会根据Fiber.tag分别处理
 
-当 `fiber.tag` 为 `FunctionComponent`，会调用 `commitHookEffectListUnmount` 。该方法会遍历 `effectList`，执行所有`useLayoutEffect` hook的销毁函数
+当 `fiber.tag` 为 `FunctionComponent`，会调用 `commitHookEffectListUnmount` 。该方法会遍历 `effectList`，执行所有`useLayoutEffect` hook的销毁函数 -->
 
 ### layout阶段（执行DOM操作后）
 #### `commitLayoutEffects` => `commitLifeCycles`
@@ -49,7 +66,7 @@ commitMutationEffects 会遍历 effectList，对每个 `Fiber` 节点执行如�
 
 **函数组件**：
 1. 同步执行 `useLayoutEffect` 的回调（通过调用 `commitHookEffectListMount`）
-2. 然后调度`useEffect` 的销毁与回调函数（通过调用 `schedulePassiveEffects`，执行 `pendingPassiveHookEffectsUnmount.push` 和 `pendingPassiveHookEffectsMount.push`）
+<!-- 2. 然后调度`useEffect` 的销毁与回调函数（通过调用 `schedulePassiveEffects`，执行 `pendingPassiveHookEffectsUnmount.push` 和 `pendingPassiveHookEffectsMount.push`） -->
 3. 赋值 `ref`
 
 **类组件**：
