@@ -1,9 +1,9 @@
 ## commit 阶段
 `commitRoot` => `commitRootImpl`
 
-### before mutation阶段（执行DOM操作前）
+### `flushPassiveEffects`
+> 执行条件：rootWithPendingPassiveEffects !== null
 
-#### `flushPassiveEffects` => `runWithPriority(..., flushPassiveEffectsImpl)`
 
 主要有两个操作：
 1. 遍历 `pendingPassiveHookEffectsUnmount`，调用 `effect.destory`
@@ -11,11 +11,17 @@
 
 注：`pendingPassiveHookEffectsUnmount` 和 `pendingPassiveHookEffectsMount` 数组项是二维数组，第一项为 `effect` 对象，第二项为 `fiber`。向数组内 `push` 数据的操作发生在 layout 阶段 `commitLayoutEffectOnFiber` 方法内部的 `schedulePassiveEffects` 方法中
 
+### 调度 passiveEffects
+> 执行条件：当前 fiber 及其子树包含 passiveEffect flag 时
+
+
+### before mutation阶段（执行DOM操作前）
+
 #### `commitBeforeMutationEffects`
 > **关键词**: `getSnapshotBeforeUpdate`
 
 **类组件**：
-1. 调用 `getSnapshotBeforeUpdate`，将返回值挂载到实例的 `__reactInternalSnapshotBeforeUpdate` 属性上，以便使用
+1. 调用 `getSnapshotBeforeUpdate`，将返回值挂载到实例的 `__reactInternalSnapshotBeforeUpdate` 属性上，以便调用 `componentDidUpdate` 时作为第三个参数传递
 
 **HostRoot**：
 1. 清空子节点
@@ -77,4 +83,3 @@
 **HostRoot**：
 1. 触发 `ReactDOM.render` 第三个参数指定的回调函数
 
-#### `onCommitRoot`
