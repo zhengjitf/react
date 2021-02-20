@@ -18,6 +18,7 @@ render 阶段开始于 `performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`
 “递”和“归”阶段会交错执行直到“归”到 `rootFiber`。至此，`render` 阶段的工作就结束了
 
 ## 组件什么时候 render ？
+**所有类型的组件**：
 更新组件时，当满足如下条件时，会跳过 `render`，直接复用之前的 `fiber`：（注：这些判断逻辑在 `beginWork` ）
 
 - `oldProps === newProps`
@@ -25,6 +26,10 @@ render 阶段开始于 `performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`
 - `workInProgress.type === current.type`
 - `!includesSomeLane(renderLanes, updateLanes)`：不包含更新或更新优先级不够
 
+**MemoComponent**：
+- 将 `oldProps` 与 `newProps` 使用 `compare`（默认浅比较）比较相等，且 `ref` 未变化时，则会跳过 `render`
+
+**类组件**：
 而对于类组件满足以下条件时，也会跳过 `render`：（注：这些判断逻辑在 `updateClassInstance` 和 `finishClassComponent` 中）
 - 如果声明了 `shouldComponentUpdate` 则直接根据返回值判定是否需要 `render`
 - 如果是 `PureReactComponent` 组件，则判断 `oldProps` 与 `newProps` 浅比较是否相等以及`oldState` 与 `newState` 浅比较相等，并且没有调用 `forceUpdate`
