@@ -209,7 +209,8 @@ type Update<State> = {
   lane: Lane
 
   tag: UpdateState | ReplaceState | ForceUpdate | CaptureUpdate
-  // 调用 setState 传递的参数，当为函数时，接受 (prevState, nextProps) 参数
+  // ClassComponent: 调用 setState 传递的参数，当为函数时，接受 (prevState, nextProps) 参数
+  // HostRoot: payload 为 ReactDOM.render 的第一个传参
   payload: any
   callback: (() => mixed) | null
 
@@ -298,7 +299,7 @@ type Hook = {
   // 则 baseQueue 对应的链表如下：
   //      Q1 -> Q2 -> Q3
   // 此时，memoizedState 为按顺序计算 Q1、Q2、Q3 之后得到的 state
-  // baseState 是 Q1 之前的 state 即 1
+  // baseState 是 Q1 之前的 state 即 baseState = 1
   baseState: any
   // baseQueue 表示优先级不够未被应用的 update 链表
   // 指向的是最后一个 update
