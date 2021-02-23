@@ -67,8 +67,7 @@
 ### layout阶段（执行DOM操作后）
 #### `commitLayoutEffects` => `commitLifeCycles`
 
-> **关键词**：`componentDidMount`, `componentDidUpdate`, `useLayoutEffect`, `调度 useEffect 的销毁函数和回调函数`, 
-`ref`
+> **关键词**：`componentDidMount`, `componentDidUpdate`,`useLayoutEffect`, `ref`
 
 **函数组件**：
 1. 同步执行 `useLayoutEffect` 的回调（通过调用 `commitHookEffectListMount`）
