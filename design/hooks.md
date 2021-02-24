@@ -1,3 +1,19 @@
+## hooks 的限制
+- hooks 函数不能被包含在条件判断语句中，要确保每次 render 时，hooks 函数被调用的顺序和个数要相同
+- hooks 函数必须在函数组件 render 时同步执行
+不能出现如下这些情况：
+  ```ts
+  useEffect(() => {
+    const [count, setCount] = useState(0)
+  })
+
+  setTimeout(() => {
+    const [count, setCount] = useState(0)
+  })
+  ```
+- rerender 的次数有限，目前内部指定最大次数为 25
+
+
 ## dispatcher
 以 `useState` [code](https://api.codestream.com/c/X-vb0kCFvXvIJGWz/wJWGhlDSQTCz1s3vCQ_mSQ) 为例：
 
@@ -116,9 +132,78 @@ type Hook = {
 ## update
 update 阶段，`hooks` 函数会通过 `updateWorkInProgressHook` [code](https://api.codestream.com/c/X-vb0kCFvXvIJGWz/FHZprRpXSLm2v6FdxLunaA) 获取对应的 `hook` 对象
 
-由于 `hook` 对象形成了链表结构，通过 `next` 可以将当前的 `hook` 指针进行移动，这种机制也带来了如下限制：
-1. `hooks` 函数不能被包含在条件判断块下
-2. `hooks` 函数必须是在函数组件 `render` 时同步执行（在 `render` 同步执行后会重置 `dispatcher`）
+在这里分为两种情况：
+1. 组件 update
+2. 组件 rerender
+
+**组件 update 时**，之前 mount 阶段生成的 hook 链表已挂载到 `current fiber`，update 时会按顺序从之前的 hook 链表拷贝生成 `workInProgress fiber` 对应的 hook 链表
+
+**rerender 时**，`workInProgress fiber` 已存在 hook 链表，直接使用
+
+注：`rerender` 是在函数组件 `render` 过程中同步调用了更新方法（如 `setState`）， 这会导致正在本次 `render` 结束后再次 `render`
+
+```ts
+function updateWorkInProgressHook(): Hook {
+  let nextCurrentHook: null | Hook;
+  if (currentHook === null) {
+    const current = currentlyRenderingFiber.alternate;
+    if (current !== null) {
+      nextCurrentHook = current.memoizedState;
+    } else {
+      nextCurrentHook = null;
+    }
+  } else {
+    nextCurrentHook = currentHook.next;
+  }
+
+  let nextWorkInProgressHook: null | Hook;
+  if (workInProgressHook === null) {
+    nextWorkInProgressHook = currentlyRenderingFiber.memoizedState;
+  } else {
+    nextWorkInProgressHook = workInProgressHook.next;
+  }
+
+  if (nextWorkInProgressHook !== null) {
+    // 这里属于 rerender 的情况
+
+    // There's already a work-in-progress. Reuse it.
+    workInProgressHook = nextWorkInProgressHook;
+    nextWorkInProgressHook = workInProgressHook.next;
+
+    currentHook = nextCurrentHook;
+  } else {
+    // 这里属于 update 的情况
+
+    // Clone from the current hook.
+    
+    // 如果 nextCurrentHook 为 null，表示当前调用的 hook 函数个数大于第一次调用个数，这是不允许的，一般是使用了条件判断语句控制 hook 函数的执行
+    invariant(
+      nextCurrentHook !== null,
+      'Rendered more hooks than during the previous render.',
+    );
+    currentHook = nextCurrentHook;
+
+    const newHook: Hook = {
+      memoizedState: currentHook.memoizedState,
+
+      baseState: currentHook.baseState,
+      baseQueue: currentHook.baseQueue,
+      queue: currentHook.queue,
+
+      next: null,
+    };
+
+    if (workInProgressHook === null) {
+      // This is the first hook in the list.
+      currentlyRenderingFiber.memoizedState = workInProgressHook = newHook;
+    } else {
+      // Append to the end of the list.
+      workInProgressHook = workInProgressHook.next = newHook;
+    }
+  }
+  return workInProgressHook;
+}
+```
 
 ## useState
 #### mount 阶段
