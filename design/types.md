@@ -315,7 +315,7 @@ type Update<S, A> = {
   lane: Lane
   action: A
   eagerReducer: ((S, A) => S) | null
-  // 待更新后的 state？
+  // 提前计算的新 state
   eagerState: S | null
   next: Update<S, A>
   priority?: ReactPriorityLevel

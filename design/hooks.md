@@ -104,7 +104,7 @@ const ContextOnlyDispatcher: Dispatcher = {
 }
 ```
 
-## mount
+## HooksDispatcherOnMount
 mount 阶段，hooks 函数会调用 `mountWorkInProgressHook` [code](https://api.codestream.com/c/X-vb0kCFvXvIJGWz/SfKPJNGRSbGSnt3JQI0ekw) 生成一个对应的 `hook` 对象，结构如下：
 
 ```ts
@@ -129,7 +129,7 @@ type Hook = {
 ```
 每个 `hooks` 函数都会生成对应的 `hook` 对象，以链表结构连接，挂载到函数组件对应 `fiber` 的 `memoizedState` 属性上
 
-## update
+## HooksDispatcherOnUpdate
 update 阶段，`hooks` 函数会通过 `updateWorkInProgressHook` [code](https://api.codestream.com/c/X-vb0kCFvXvIJGWz/FHZprRpXSLm2v6FdxLunaA) 获取对应的 `hook` 对象
 
 在这里分为两种情况：
@@ -140,7 +140,7 @@ update 阶段，`hooks` 函数会通过 `updateWorkInProgressHook` [code](https:
 
 **rerender 时**，`workInProgress fiber` 已存在 hook 链表，直接使用
 
-注：`rerender` 是在函数组件 `render` 过程中同步调用了更新方法（如 `setState`）， 这会导致正在本次 `render` 结束后再次 `render`
+注：`rerender` 是在函数组件 `render` 过程中同步调用了更新方法（如 `setState`）， 这会导致在本次 `render` 结束后再次 `render`
 
 ```ts
 function updateWorkInProgressHook(): Hook {
@@ -214,8 +214,48 @@ function updateWorkInProgressHook(): Hook {
 - 根据初始值，初始化 `hook.memoizedState` 和 `hook.baseState`
 - 创建 `updateQueue`（`hook.queue`）
 
+
+`updateQueue` 类型如下：
+```ts
+// UpdateQueue.pending 指向最后一个未处理的 update
+// UpdateQueue.pending.next 指向第一个未处理的 update
+type UpdateQueue<S, A> = {
+  pending: Update<S, A> | null
+  interleaved: Update<S, A> | null
+  dispatch: (A => mixed) | null
+  lastRenderedReducer: ((S, A) => S) | null
+  lastRenderedState: S | null
+};
+
+// Update 是一个环状链表
+type Update<S, A> = {
+  lane: Lane
+  action: A
+  eagerReducer: ((S, A) => S) | null
+  // 提前计算的新 state
+  eagerState: S | null
+  next: Update<S, A>
+  priority?: ReactPriorityLevel
+};
+```
+
 `mountState` 函数返回的是 `[hook.memoizedState, dispatch]`，
 `dispatch` 内部已经绑定了当前的 `fiber` （函数组件对应的 `fiber`）和 `hook.queue`，并挂载到 `hook.queue.dispatch`，在 `update` 阶段时直接返回该 `dispatch`，所以 `useState` 返回的数组对象的第二项（即 `dispatch`）引用不会变
+
+```ts
+const dispatch: Dispatch<
+  BasicStateAction<S>,
+> = (queue.dispatch = (dispatchAction.bind(
+  null,
+  currentlyRenderingFiber,
+  queue,
+): any));
+```
+
+所以，调用 `setState` 时内部执行的是 `dispatchAction`，主要逻辑如下：
+1. 创建 update 对象追加到 updateQueue
+2. 如果 updateQueue 为空，则提前计算新的 state，如果新的 state 和当前 state 相同，则直接跳出，不再执行后续逻辑
+3. 执行 `scheduleUpdateOnFiber`，调度更新操作
 
 #### update 阶段
 `update` 阶段，调用的是 `updateState`：
@@ -227,7 +267,10 @@ function updateState<S>(
   return updateReducer(basicStateReducer, (initialState: any));
 }
 ```
-内部调用的是 `updateReducer` [code](https://api.codestream.com/c/X-vb0kCFvXvIJGWz/EDdfRirjRRSpWg-li4-Acg)
+内部调用的是 `updateReducer` [code](https://api.codestream.com/c/X-vb0kCFvXvIJGWz/EDdfRirjRRSpWg-li4-Acg)，主要逻辑如下：
+1. 根据当前 hook 对象上的 `baseState` 、`baseQueue` 以及 `queue.pending` 计算新的 `state` 和更新 `baseState` 、 `baseQueue` 以及情况 `queue.pending`
+2. 如果新 state 与当前 state 不相同则标记更新，执行后续更新操作，否则直接跳出
+
 
 ### 以 useState 为例
 1. 函数组件第一次调用 (`mount`) 时，`useState` 对应的是 `mountState` 返回 `[初始值, dispatchAction]`
