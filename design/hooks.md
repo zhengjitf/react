@@ -268,12 +268,97 @@ function updateState<S>(
 }
 ```
 内部调用的是 `updateReducer` [code](https://api.codestream.com/c/X-vb0kCFvXvIJGWz/EDdfRirjRRSpWg-li4-Acg)，主要逻辑如下：
-1. 根据当前 hook 对象上的 `baseState` 、`baseQueue` 以及 `queue.pending` 计算新的 `state` 和更新 `baseState` 、 `baseQueue` 以及情况 `queue.pending`
+1. 根据当前 hook 对象上的 `baseState` 、`baseQueue` 以及 `queue.pending` 计算新的 `state` 和更新 `baseState` 、 `baseQueue` 以及清空 `queue.pending`
 2. 如果新 state 与当前 state 不相同则标记更新，执行后续更新操作，否则直接跳出
 
+## useEffect
 
-### 以 useState 为例
-1. 函数组件第一次调用 (`mount`) 时，`useState` 对应的是 `mountState` 返回 `[初始值, dispatchAction]`
-2. 调用 `dispatchAction` 会创建一个 `update` 对象放入 `hook.queue.pending` 末尾，然后调用 `scheduleUpdateOnFiber` 开始 `render` 过程，
-3. render 过程中再次调用函数组件，再次调用 `useState`，此时对应的是 `updateState`，内部调用 `updateReducer`，根据 `hook.baseQueue` 和 
-`hook.queue.pending` 更新状态
+## useContext
+### 创建 context 对象
+```ts
+export function createContext<T>(
+  defaultValue: T,
+  calculateChangedBits: ?(a: T, b: T) => number,
+): ReactContext<T> {
+  // ....
+
+  const context: ReactContext<T> = {
+    $$typeof: REACT_CONTEXT_TYPE,
+    _calculateChangedBits: calculateChangedBits,
+    // As a workaround to support multiple concurrent renderers, we categorize
+    // some renderers as primary and others as secondary. We only expect
+    // there to be two concurrent renderers at most: React Native (primary) and
+    // Fabric (secondary); React DOM (primary) and React ART (secondary).
+    // Secondary renderers store their context values on separate fields.
+    _currentValue: defaultValue,
+    _currentValue2: defaultValue,
+    // Used to track how many concurrent renderers this context currently
+    // supports within in a single renderer. Such as parallel server rendering.
+    _threadCount: 0,
+    // These are circular
+    Provider: (null as any),
+    Consumer: (null as any),
+  };
+
+  context.Provider = {
+    $$typeof: REACT_PROVIDER_TYPE,
+    _context: context,
+  };
+
+  context.Consumer = context;
+
+  return context;
+}
+```
+从源码可以看出 `context.Consumer` 其实就是 `context` 本身
+
+### Provider
+`render` 阶段对 `Provider` 的处理在 `updateContextProvider` 中：
+
+```ts
+function updateContextProvider(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  renderLanes: Lanes,
+) {
+  const providerType: ReactProviderType<any> = workInProgress.type;
+  const context: ReactContext<any> = providerType._context;
+
+  const newProps = workInProgress.pendingProps;
+  const oldProps = workInProgress.memoizedProps;
+
+  const newValue = newProps.value;
+
+  pushProvider(workInProgress, context, newValue);
+
+  if (oldProps !== null) {
+    const oldValue = oldProps.value;
+    const changedBits = calculateChangedBits(context, newValue, oldValue);
+    if (changedBits === 0) {
+      // No change. Bailout early if children are the same.
+      if (
+        oldProps.children === newProps.children &&
+        !hasLegacyContextChanged()
+      ) {
+        return bailoutOnAlreadyFinishedWork(
+          current,
+          workInProgress,
+          renderLanes,
+        );
+      }
+    } else {
+      // The context value changed. Search for matching consumers and schedule
+      // them to update.
+      // context 的更新处理
+      propagateContextChange(workInProgress, context, changedBits, renderLanes);
+    }
+  }
+
+  const newChildren = newProps.children;
+  reconcileChildren(current, workInProgress, newChildren, renderLanes);
+  return workInProgress.child;
+}
+```
+
+### Consumer
+ 
