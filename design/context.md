@@ -1,5 +1,33 @@
 ## context
 
+### mount 流程
+
+### update 流程
+
+```
+更新 Provider value
+
+    |
+    |
+    v
+
+调度更新
+
+    |
+    |
+    v
+
+render 阶段（`performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`）
+        |
+    |   | 
+    |    —— ——> 遇到 Provider 调用 updateContextProvider； 遇到 Consumer 调用 updateContextConsumer
+    |
+    v
+
+commit阶段（`commitRoot`）
+```
+
+
 ### 创建 context 对象
 ```ts
 export function createContext<T>(
@@ -40,6 +68,11 @@ export function createContext<T>(
 
 ### Provider
 `render` 阶段对 `Provider` 的处理在 `updateContextProvider` 中：
+
+1. 判断 `value` 是否变化
+2. 如果没变化，且 `props.children` 未变化，则直接跳出，复用下级 fiber （从 `current fiber` 树）
+3. 否则往下遍历寻找所有包含该 `context` 依赖的 `fiber` 节点，更新其 `lanes` 和 `dependencies.lanes`（即标记需要更新），以及循环往上更新`fiber.childLanes`（遍历过程中会通过该属性判断下级是否包含更新），如果是 `ClassComponent`，为其添加一个 `tag` 为 `ForceUpdate` 的 `update` 对象
+4. 然后继续 `render` 过程 (`reconcileChildren`)
 
 ```ts
 function updateContextProvider(

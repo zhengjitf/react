@@ -260,7 +260,7 @@ type Dependencies = {
   lanes: Lanes,
   firstContext: ContextDependency<mixed> | null,
   responders: | null
-  ...
+  // ...
 }
 ```
 

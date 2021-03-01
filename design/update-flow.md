@@ -31,7 +31,7 @@
     |
     v
 
-render阶段（`performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`）
+render 阶段（`performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`）
 
     |
     |
