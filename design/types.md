@@ -293,6 +293,12 @@ type ReactElement = {
 
 ```ts
 type Hook = {
+  // useState、useReducer => state
+  // useEffect => Effect
+  // useRef => { current: xx }
+  // useMemo => [callback(), ...deps]
+  // useCallback => [callback, ...deps]
+  // useContext 没有 memoizedState
   memoizedState: any
   // 第一个未被应用的 update（baseQueue.next） 之前的 state
   // 假设当前 state = 1，相继触发三次 dispatchAction，创建三个 update： Q1 Q2 Q3

@@ -272,6 +272,158 @@ function updateState<S>(
 2. 如果新 state 与当前 state 不相同则标记更新，执行后续更新操作，否则直接跳出
 
 ## useEffect
+#### mount 阶段
+```ts
+function mountEffect(
+  create: () => (() => void) | void,
+  deps: Array<mixed> | void | null,
+): void {
+  return mountEffectImpl(
+    PassiveEffect | PassiveStaticEffect,
+    HookPassive,
+    create,
+    deps,
+  );
+}
+
+function mountEffectImpl(fiberFlags, hookFlags, create, deps): void {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  currentlyRenderingFiber.flags |= fiberFlags;
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookFlags,
+    create,
+    undefined,
+    nextDeps,
+  );
+}
+```
+
+```ts
+function pushEffect(tag, create, destroy, deps) {
+  const effect: Effect = {
+    tag,
+    create,
+    destroy,
+    deps,
+    // Circular
+    next: null,
+  };
+  let componentUpdateQueue: null | FunctionComponentUpdateQueue = currentlyRenderingFiber.updateQueue;
+  if (componentUpdateQueue === null) {
+    componentUpdateQueue = createFunctionComponentUpdateQueue();
+    currentlyRenderingFiber.updateQueue = componentUpdateQueue;
+    componentUpdateQueue.lastEffect = effect.next = effect;
+  } else {
+    const lastEffect = componentUpdateQueue.lastEffect;
+    if (lastEffect === null) {
+      componentUpdateQueue.lastEffect = effect.next = effect;
+    } else {
+      const firstEffect = lastEffect.next;
+      lastEffect.next = effect;
+      effect.next = firstEffect;
+      componentUpdateQueue.lastEffect = effect;
+    }
+  }
+  return effect;
+}
+```
+
+#### update 阶段
+
+```ts
+function updateEffect(
+  create: () => (() => void) | void,
+  deps: Array<mixed> | void | null,
+): void {
+  return updateEffectImpl(PassiveEffect, HookPassive, create, deps);
+}
+
+function updateEffectImpl(fiberFlags, hookFlags, create, deps): void {
+  const hook = updateWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  let destroy = undefined;
+
+  if (currentHook !== null) {
+    const prevEffect = currentHook.memoizedState;
+    destroy = prevEffect.destroy;
+    if (nextDeps !== null) {
+      const prevDeps = prevEffect.deps;
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        hook.memoizedState = pushEffect(hookFlags, create, destroy, nextDeps);
+        return;
+      }
+    }
+  }
+
+  currentlyRenderingFiber.flags |= fiberFlags;
+
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookFlags,
+    create,
+    destroy,
+    nextDeps,
+  );
+}
+```
 
 ## useContext
+`mount` 和 `update` 调用的都是 `readContext`：
+
+主要逻辑：
+1. 在 fiber 对象上标记该 context 依赖 (设置 `fiber.dependencies`)
+2. 返回 `context.value`
+
+```ts
+function readContext<T>(
+  context: ReactContext<T>,
+  observedBits: void | number | boolean,
+): T {
+  if (lastContextWithAllBitsObserved === context) {
+    // Nothing to do. We already observe everything in this context.
+  } else if (observedBits === false || observedBits === 0) {
+    // Do not observe any updates.
+  } else {
+    let resolvedObservedBits; // Avoid deopting on observable arguments or heterogeneous types.
+    if (
+      typeof observedBits !== 'number' ||
+      observedBits === MAX_SIGNED_31_BIT_INT
+    ) {
+      // Observe all updates.
+      lastContextWithAllBitsObserved = ((context: any): ReactContext<mixed>);
+      resolvedObservedBits = MAX_SIGNED_31_BIT_INT;
+    } else {
+      resolvedObservedBits = observedBits;
+    }
+
+    const contextItem = {
+      context: ((context: any): ReactContext<mixed>),
+      observedBits: resolvedObservedBits,
+      next: null,
+    };
+
+    if (lastContextDependency === null) {
+      invariant(
+        currentlyRenderingFiber !== null,
+        'Context can only be read while React is rendering. ' +
+          'In classes, you can read it in the render method or getDerivedStateFromProps. ' +
+          'In function components, you can read it directly in the function body, but not ' +
+          'inside Hooks like useReducer() or useMemo().',
+      );
+
+      // This is the first dependency for this component. Create a new list.
+      lastContextDependency = contextItem;
+      currentlyRenderingFiber.dependencies = {
+        lanes: NoLanes,
+        firstContext: contextItem,
+        responders: null,
+      };
+    } else {
+      // Append a new context item.
+      lastContextDependency = lastContextDependency.next = contextItem;
+    }
+  }
+  return isPrimaryRenderer ? context._currentValue : context._currentValue2;
+}
+```
 
