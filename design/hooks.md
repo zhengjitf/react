@@ -271,7 +271,81 @@ function updateState<S>(
 1. 根据当前 hook 对象上的 `baseState` 、`baseQueue` 以及 `queue.pending` 计算新的 `state` 和更新 `baseState` 、 `baseQueue` 以及清空 `queue.pending`
 2. 如果新 state 与当前 state 不相同则标记更新，执行后续更新操作，否则直接跳出
 
+## useContext
+`mount` 和 `update` 调用的都是 `readContext`：
+
+主要逻辑：
+1. 在 fiber 对象上标记该 context 依赖 (设置 `fiber.dependencies`)
+2. 返回 `context.value`
+
+```ts
+function readContext<T>(
+  context: ReactContext<T>,
+  observedBits: void | number | boolean,
+): T {
+  if (lastContextWithAllBitsObserved === context) {
+    // Nothing to do. We already observe everything in this context.
+  } else if (observedBits === false || observedBits === 0) {
+    // Do not observe any updates.
+  } else {
+    let resolvedObservedBits; // Avoid deopting on observable arguments or heterogeneous types.
+    if (
+      typeof observedBits !== 'number' ||
+      observedBits === MAX_SIGNED_31_BIT_INT
+    ) {
+      // Observe all updates.
+      lastContextWithAllBitsObserved = ((context: any): ReactContext<mixed>);
+      resolvedObservedBits = MAX_SIGNED_31_BIT_INT;
+    } else {
+      resolvedObservedBits = observedBits;
+    }
+
+    const contextItem = {
+      context: ((context: any): ReactContext<mixed>),
+      observedBits: resolvedObservedBits,
+      next: null,
+    };
+
+    if (lastContextDependency === null) {
+      invariant(
+        currentlyRenderingFiber !== null,
+        'Context can only be read while React is rendering. ' +
+          'In classes, you can read it in the render method or getDerivedStateFromProps. ' +
+          'In function components, you can read it directly in the function body, but not ' +
+          'inside Hooks like useReducer() or useMemo().',
+      );
+
+      // This is the first dependency for this component. Create a new list.
+      lastContextDependency = contextItem;
+      currentlyRenderingFiber.dependencies = {
+        lanes: NoLanes,
+        firstContext: contextItem,
+        responders: null,
+      };
+    } else {
+      // Append a new context item.
+      lastContextDependency = lastContextDependency.next = contextItem;
+    }
+  }
+  return isPrimaryRenderer ? context._currentValue : context._currentValue2;
+}
+```
+
 ## useEffect
+
+### 整体流程
+
+**render 阶段**
+1. 重置 `fiber.updateQueue` 为 null
+2. mount 时调用 `mountEffect` 创建一个 tag 添加了 `HookHasEffect` 的 effect 对象；
+update 时调用 `updateEffect` 创建一个 effect 对象，如果 `deps` 变化则会为其 tag 添加`HookHasEffect`
+3. 然后将创建的 effect 添加到 `fiber.updateQueue`
+
+
+**commit 阶段**：
+1. 遍历 `fiber.deletions` , 再遍历每个 `fiberToDelete` 的 `updateQueue`，调用  `destroy`（如果不为 null）
+2. 遍历 `fiber.updateQueue`, 调用 tag 为 `HookPassive | HookHasEffect` 的 `effect`对象的 `create`，将返回值赋给 `effect.destory`
+
 #### mount 阶段
 ```ts
 function mountEffect(
@@ -366,64 +440,3 @@ function updateEffectImpl(fiberFlags, hookFlags, create, deps): void {
   );
 }
 ```
-
-## useContext
-`mount` 和 `update` 调用的都是 `readContext`：
-
-主要逻辑：
-1. 在 fiber 对象上标记该 context 依赖 (设置 `fiber.dependencies`)
-2. 返回 `context.value`
-
-```ts
-function readContext<T>(
-  context: ReactContext<T>,
-  observedBits: void | number | boolean,
-): T {
-  if (lastContextWithAllBitsObserved === context) {
-    // Nothing to do. We already observe everything in this context.
-  } else if (observedBits === false || observedBits === 0) {
-    // Do not observe any updates.
-  } else {
-    let resolvedObservedBits; // Avoid deopting on observable arguments or heterogeneous types.
-    if (
-      typeof observedBits !== 'number' ||
-      observedBits === MAX_SIGNED_31_BIT_INT
-    ) {
-      // Observe all updates.
-      lastContextWithAllBitsObserved = ((context: any): ReactContext<mixed>);
-      resolvedObservedBits = MAX_SIGNED_31_BIT_INT;
-    } else {
-      resolvedObservedBits = observedBits;
-    }
-
-    const contextItem = {
-      context: ((context: any): ReactContext<mixed>),
-      observedBits: resolvedObservedBits,
-      next: null,
-    };
-
-    if (lastContextDependency === null) {
-      invariant(
-        currentlyRenderingFiber !== null,
-        'Context can only be read while React is rendering. ' +
-          'In classes, you can read it in the render method or getDerivedStateFromProps. ' +
-          'In function components, you can read it directly in the function body, but not ' +
-          'inside Hooks like useReducer() or useMemo().',
-      );
-
-      // This is the first dependency for this component. Create a new list.
-      lastContextDependency = contextItem;
-      currentlyRenderingFiber.dependencies = {
-        lanes: NoLanes,
-        firstContext: contextItem,
-        responders: null,
-      };
-    } else {
-      // Append a new context item.
-      lastContextDependency = lastContextDependency.next = contextItem;
-    }
-  }
-  return isPrimaryRenderer ? context._currentValue : context._currentValue2;
-}
-```
-
