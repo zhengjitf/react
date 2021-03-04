@@ -271,6 +271,46 @@ function updateState<S>(
 1. 根据当前 hook 对象上的 `baseState` 、`baseQueue` 以及 `queue.pending` 计算新的 `state` 和更新 `baseState` 、 `baseQueue` 以及清空 `queue.pending`
 2. 如果新 state 与当前 state 不相同则标记更新，执行后续更新操作，否则直接跳出
 
+## useReducer
+#### mount 阶段
+调用 `mountReducer`，与 `mountState` 逻辑大致相同，主要区别是：
+1. `mountReducer` 需要设置 `reducer`，而 `mountState` 内置 `basicStateReducer`
+2. `mountReducer` 可以指定初始值的生成函数 `init`
+
+```ts
+function mountReducer<S, I, A>(
+  reducer: (S, A) => S,
+  initialArg: I,
+  init?: I => S,
+): [S, Dispatch<A>] {
+  const hook = mountWorkInProgressHook();
+  let initialState;
+  if (init !== undefined) {
+    initialState = init(initialArg);
+  } else {
+    initialState = ((initialArg: any): S);
+  }
+  hook.memoizedState = hook.baseState = initialState;
+  const queue = (hook.queue = {
+    pending: null,
+    interleaved: null,
+    lanes: NoLanes,
+    dispatch: null,
+    lastRenderedReducer: reducer,
+    lastRenderedState: (initialState: any),
+  });
+  const dispatch: Dispatch<A> = (queue.dispatch = (dispatchAction.bind(
+    null,
+    currentlyRenderingFiber,
+    queue,
+  ): any));
+  return [hook.memoizedState, dispatch];
+}
+```
+
+#### update 阶段
+调用的是 `updateReducer`，在上面对 `useState` 分析已做过介绍
+
 ## useContext
 `mount` 和 `update` 调用的都是 `readContext`：
 
@@ -440,3 +480,17 @@ function updateEffectImpl(fiberFlags, hookFlags, create, deps): void {
   );
 }
 ```
+
+## useLayoutEffect
+和 `useEffect` 相同，`mount` 阶段和 `update` 阶段内部分别调用的是 `mountEffectImpl` 和 `updateEffectImpl`，但传递的参数不同：
+
+```ts
+// useEffect
+mountEffectImpl(/* fiberFlags */ PassiveEffect | PassiveStaticEffect,  /* hookFlags */ HookPassive, create, deps)
+updateEffectImpl(/* fiberFlags */ PassiveEffect, /* hookFlags */ HookPassive, create, deps)
+
+// useLayoutEffect
+mountEffectImpl(/* fiberFlags */ UpdateEffect, /* hookFlags */ HookLayout, create, deps)
+updateEffectImpl(/* fiberFlags */ UpdateEffect, /* hookFlags */ HookLayout, create, deps)
+```
+`create` 函数和 `destroy` 函数是在 `commit` 阶段被调用，具体调用时机和条件请看 `commit` 阶段解析 
