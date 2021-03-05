@@ -494,3 +494,163 @@ mountEffectImpl(/* fiberFlags */ UpdateEffect, /* hookFlags */ HookLayout, creat
 updateEffectImpl(/* fiberFlags */ UpdateEffect, /* hookFlags */ HookLayout, create, deps)
 ```
 `create` 函数和 `destroy` 函数是在 `commit` 阶段被调用，具体调用时机和条件请看 `commit` 阶段解析 
+
+## useCallback
+`useCallback` 逻辑比较简单，主要是通过比较 `deps` 前后是否有变化，决定是否使用缓存的 `callback`
+#### mount
+```ts
+function mountCallback<T>(callback: T, deps: Array<mixed> | void | null): T {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  hook.memoizedState = [callback, nextDeps];
+  return callback;
+}
+```
+
+#### update
+```ts
+function updateCallback<T>(callback: T, deps: Array<mixed> | void | null): T {
+  const hook = updateWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  const prevState = hook.memoizedState;
+  if (prevState !== null) {
+    if (nextDeps !== null) {
+      const prevDeps: Array<mixed> | null = prevState[1];
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        return prevState[0];
+      }
+    }
+  }
+  hook.memoizedState = [callback, nextDeps];
+  return callback;
+}
+```
+
+## useMemo
+与 `useCallback` 类似，区别是缓存的是 `nextCreate` 函数的返回值
+#### mount
+
+```ts
+function mountMemo<T>(
+  nextCreate: () => T,
+  deps: Array<mixed> | void | null,
+): T {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  const nextValue = nextCreate();
+  hook.memoizedState = [nextValue, nextDeps];
+  return nextValue;
+}
+```
+
+#### update
+
+```ts
+function updateMemo<T>(
+  nextCreate: () => T,
+  deps: Array<mixed> | void | null,
+): T {
+  const hook = updateWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  const prevState = hook.memoizedState;
+  if (prevState !== null) {
+    // Assume these are defined. If they're not, areHookInputsEqual will warn.
+    if (nextDeps !== null) {
+      const prevDeps: Array<mixed> | null = prevState[1];
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        return prevState[0];
+      }
+    }
+  }
+  const nextValue = nextCreate();
+  hook.memoizedState = [nextValue, nextDeps];
+  return nextValue;
+}
+```
+
+## useRef
+`useRef` 生成的是一个可变对象 `{ current: null }`，引用不变，但内部的 `current` 属性可被更改
+#### mount
+
+```ts
+function mountRef<T>(initialValue: T): {|current: T|} {
+  const hook = mountWorkInProgressHook();
+  const ref = {current: initialValue};
+  hook.memoizedState = ref;
+  return ref;
+}
+```
+
+#### update
+
+```ts
+function updateRef<T>(initialValue: T): {|current: T|} {
+  const hook = updateWorkInProgressHook();
+  return hook.memoizedState;
+}
+```
+
+## useImperativeHandle
+
+`useImperativeHandle(ref, create, [deps])` 主要逻辑：相当于在 `useLayoutEffect` 的回调中，将 `create` 返回数据挂载到 `ref` 上
+
+#### mount
+```ts
+function mountImperativeHandle<T>(
+  ref: {|current: T | null|} | ((inst: T | null) => mixed) | null | void,
+  create: () => T,
+  deps: Array<mixed> | void | null,
+): void {
+  // TODO: If deps are provided, should we skip comparing the ref itself?
+  const effectDeps =
+    deps !== null && deps !== undefined ? deps.concat([ref]) : null;
+
+  return mountEffectImpl(
+    UpdateEffect,
+    HookLayout,
+    imperativeHandleEffect.bind(null, create, ref),
+    effectDeps,
+  );
+}
+
+function imperativeHandleEffect<T>(
+  create: () => T,
+  ref: {|current: T | null|} | ((inst: T | null) => mixed) | null | void,
+) {
+  if (typeof ref === 'function') {
+    const refCallback = ref;
+    const inst = create();
+    refCallback(inst);
+    return () => {
+      refCallback(null);
+    };
+  } else if (ref !== null && ref !== undefined) {
+    const refObject = ref;
+    const inst = create();
+    refObject.current = inst;
+    return () => {
+      refObject.current = null;
+    };
+  }
+}
+```
+
+#### update
+```ts
+function updateImperativeHandle<T>(
+  ref: {|current: T | null|} | ((inst: T | null) => mixed) | null | void,
+  create: () => T,
+  deps: Array<mixed> | void | null,
+): void {
+  // TODO: If deps are provided, should we skip comparing the ref itself?
+  const effectDeps =
+    deps !== null && deps !== undefined ? deps.concat([ref]) : null;
+
+  return updateEffectImpl(
+    UpdateEffect,
+    HookLayout,
+    imperativeHandleEffect.bind(null, create, ref),
+    effectDeps,
+  );
+}
+```

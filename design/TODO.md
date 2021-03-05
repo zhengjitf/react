@@ -1,8 +1,8 @@
 - [x] useLayoutEffect
-- [ ] useCallback
-- [ ] useMemo
-- [ ] useImperativeHandle
-- [ ] useRef
+- [x] useCallback
+- [x] useMemo
+- [x] useRef
+- [x] useImperativeHandle
 - [ ] useDeferredValue
 - [ ] useMutableSource
 - [ ] useOpaqueIdentifier
