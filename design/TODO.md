@@ -6,3 +6,8 @@
 - [ ] useDeferredValue
 - [ ] useMutableSource
 - [ ] useOpaqueIdentifier
+
+```ts
+flushSyncCallbackQueue
+flushSync
+```
