@@ -36,6 +36,17 @@ type FiberRoot = {
 
   // Node returned by Scheduler.scheduleCallback. Represents the next rendering
   // task that the root will work on.
+  // timerQueue / taskQueue 中存放的 task
+  /* 
+    task = {
+      id: taskIdCounter++,
+      callback,
+      priorityLevel,
+      startTime,
+      expirationTime,
+      sortIndex: -1,
+    } 
+  */
   callbackNode: *;
   callbackPriority: LanePriority;
   eventTimes: LaneMap<number>;
