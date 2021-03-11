@@ -173,3 +173,16 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
   return newTask;
 }
 ```
+
+
+```
+ReactDOM.createRoot(xx) 创建 tag 为 ConcurrentRoot 的 fiberRoot
+    |
+    |
+    v
+.render(xx) 调用 updateContainer:
+    |
+    |
+    v   
+
+```
