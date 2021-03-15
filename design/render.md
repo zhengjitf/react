@@ -33,3 +33,7 @@ render 阶段开始于 `performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`
 而对于类组件满足以下条件时，也会跳过 `render`：（注：这些判断逻辑在 `updateClassInstance` 和 `finishClassComponent` 中）
 - 如果声明了 `shouldComponentUpdate` 则直接根据返回值判定是否需要 `render`
 - 如果是 `PureReactComponent` 组件，则判断 `oldProps` 与 `newProps` 浅比较是否相等以及`oldState` 与 `newState` 浅比较相等，并且没有调用 `forceUpdate`
+
+
+`getSnapshotBeforeUpdate` 在 `render` 阶段执行
+调用时机：组件 render 时

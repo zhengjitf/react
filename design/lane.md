@@ -1,8 +1,5 @@
-[官方相关 issue] (https://github.com/facebook/react/pull/18796)
+[官方相关 issue](https://github.com/facebook/react/pull/18796)
 
-```ts
-
-```
 
 几种更新优先级标识:
 1. [ReactPriorityLevel](../packages/react-reconciler/src/ReactInternalTypes.js)
@@ -183,6 +180,170 @@ ReactDOM.createRoot(xx) 创建 tag 为 ConcurrentRoot 的 fiberRoot
 .render(xx) 调用 updateContainer:
     |
     |
-    v   
+    v 
+用 tag 对应生成的 lane，调用 scheduleUpdateOnFiber
+```
 
+和同步任务相关的方法：
+
+**flushSync**：
+`ReactDOM` 模块暴露的方法，用于 `concurrent` 模式下，提高渲染优先级？
+
+```ts
+export function flushSync<A, R>(fn: A => R, a: A): R {
+  const prevExecutionContext = executionContext;
+  if ((prevExecutionContext & (RenderContext | CommitContext)) !== NoContext) {
+    return fn(a);
+  }
+  executionContext |= BatchedContext;
+
+  const previousLanePriority = getCurrentUpdateLanePriority();
+  try {
+    setCurrentUpdateLanePriority(SyncLanePriority);
+    if (fn) {
+      return fn(a);
+    } else {
+      return (undefined: $FlowFixMe);
+    }
+  } finally {
+    setCurrentUpdateLanePriority(previousLanePriority);
+    executionContext = prevExecutionContext;
+    // Flush the immediate callbacks that were scheduled during this batch.
+    // Note that this will happen even if batchedUpdates is higher up
+    // the stack.
+    flushSyncCallbackQueue();
+  }
+}
+```
+
+**flushSyncCallbackQueue**：
+立即调用同步任务（`syncQueue`）
+
+```ts
+function flushSyncCallbackQueueImpl() {
+  if (!isFlushingSyncQueue && syncQueue !== null) {
+    // Prevent re-entrancy.
+    isFlushingSyncQueue = true;
+    let i = 0;
+    const previousLanePriority = getCurrentUpdateLanePriority();
+    try {
+      const isSync = true;
+      const queue = syncQueue;
+      setCurrentUpdateLanePriority(SyncLanePriority);
+      for (; i < queue.length; i++) {
+        let callback = queue[i];
+        do {
+          callback = callback(isSync);
+        } while (callback !== null);
+      }
+      syncQueue = null;
+    } catch (error) {
+      // If something throws, leave the remaining callbacks on the queue.
+      if (syncQueue !== null) {
+        syncQueue = syncQueue.slice(i + 1);
+      }
+      // Resume flushing in the next tick
+      Scheduler_scheduleCallback(
+        Scheduler_ImmediatePriority,
+        flushSyncCallbackQueue,
+      );
+      throw error;
+    } finally {
+      setCurrentUpdateLanePriority(previousLanePriority);
+      isFlushingSyncQueue = false;
+    }
+  }
+}
+```
+
+和异步任务相关的方法：
+**unstable_scheduleCallback**：
+
+```ts
+function unstable_scheduleCallback(priorityLevel, callback, options) {
+  var currentTime = getCurrentTime();
+
+  var startTime;
+  if (typeof options === 'object' && options !== null) {
+    var delay = options.delay;
+    if (typeof delay === 'number' && delay > 0) {
+      startTime = currentTime + delay;
+    } else {
+      startTime = currentTime;
+    }
+  } else {
+    startTime = currentTime;
+  }
+
+  var timeout;
+  switch (priorityLevel) {
+    case ImmediatePriority:
+      timeout = IMMEDIATE_PRIORITY_TIMEOUT;
+      break;
+    case UserBlockingPriority:
+      timeout = USER_BLOCKING_PRIORITY_TIMEOUT;
+      break;
+    case IdlePriority:
+      timeout = IDLE_PRIORITY_TIMEOUT;
+      break;
+    case LowPriority:
+      timeout = LOW_PRIORITY_TIMEOUT;
+      break;
+    case NormalPriority:
+    default:
+      timeout = NORMAL_PRIORITY_TIMEOUT;
+      break;
+  }
+
+  var expirationTime = startTime + timeout;
+
+  var newTask = {
+    id: taskIdCounter++,
+    callback,
+    priorityLevel,
+    startTime,
+    expirationTime,
+    sortIndex: -1,
+  };
+  if (enableProfiling) {
+    newTask.isQueued = false;
+  }
+
+  if (startTime > currentTime) {
+    // This is a delayed task.
+    newTask.sortIndex = startTime;
+    push(timerQueue, newTask);
+    if (peek(taskQueue) === null && newTask === peek(timerQueue)) {
+      // All tasks are delayed, and this is the task with the earliest delay.
+      if (isHostTimeoutScheduled) {
+        // Cancel an existing timeout.
+        cancelHostTimeout();
+      } else {
+        isHostTimeoutScheduled = true;
+      }
+      // Schedule a timeout.
+      requestHostTimeout(handleTimeout, startTime - currentTime);
+    }
+  } else {
+    newTask.sortIndex = expirationTime;
+    push(taskQueue, newTask);
+    if (enableProfiling) {
+      markTaskStart(newTask, currentTime);
+      newTask.isQueued = true;
+    }
+    // Schedule a host callback, if needed. If we're already performing work,
+    // wait until the next time we yield.
+    if (!isHostCallbackScheduled && !isPerformingWork) {
+      isHostCallbackScheduled = true;
+      /** requestHostCallback 负责调度 */
+      /** flushWork 负责处理任务：
+       *    1. 将 timerQueue 中到期的 task 放入 taskQueue 
+       *    2. 循环 taskQueue ，如果取出的 task 未过期且当前渲染周期没有剩余时间时，跳出循环，否则执行该 task 并从队列推出 
+       */
+      requestHostCallback(flushWork);
+    }
+  }
+
+  return newTask;
+}
 ```
