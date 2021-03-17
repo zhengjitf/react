@@ -1,12 +1,12 @@
 [官方相关 issue](https://github.com/facebook/react/pull/18796)
 
 
-几种更新优先级标识:
+**几种更新优先级标识**:
 1. [ReactPriorityLevel](../packages/react-reconciler/src/ReactInternalTypes.js)
 2. [SchedulerPriorityLevel](../packages/scheduler/src/SchedulerPriorities.js)
 3. [LanePriority](../packages/react-reconciler/src/ReactFiberLane.new.js)
 
-互相转换：
+**互相转换**：
 1. [`ReactPriorityLevel` -> `SchedulerPriorityLevel`](../packages/react-reconciler/src/SchedulerWithReactIntegration.new.js)
 
 ```ts
@@ -88,8 +88,14 @@ function lanePriorityToSchedulerPriority(
 }
 ```
 
-使用优先级：
-1. 
+**计算优先级**：
+
+
+**使用优先级**：
+1. `scheduleCallback`
+
+以一个优先级注册 `callback`，在适当的时机执行
+
 ```ts
 function unstable_scheduleCallback(priorityLevel, callback, options) {
   var currentTime = getCurrentTime();
@@ -134,11 +140,9 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
     priorityLevel,
     startTime,
     expirationTime,
+    // 用于小顶堆排序时对元素进行比较的标识
     sortIndex: -1,
   };
-  if (enableProfiling) {
-    newTask.isQueued = false;
-  }
  
   if (startTime > currentTime) {
     // This is a delayed task.
@@ -171,6 +175,47 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
 }
 ```
 
+2. reconciler `runWithPriority`
+```ts
+function runWithPriority<T>(priority: LanePriority, fn: () => T) {
+  const previousPriority = getCurrentUpdateLanePriority();
+  try {
+    setCurrentUpdateLanePriority(priority);
+    return fn();
+  } finally {
+    setCurrentUpdateLanePriority(previousPriority);
+  }
+}
+```
+
+3. schedule `runWithPriority`
+
+以一个优先级执行 `callback`，如果是同步的任务，优先级就是 `ImmediateSchedulerPriority`
+
+```ts
+function unstable_runWithPriority(priorityLevel, eventHandler) {
+  switch (priorityLevel) {
+    case ImmediatePriority:
+    case UserBlockingPriority:
+    case NormalPriority:
+    case LowPriority:
+    case IdlePriority:
+      break;
+    default:
+      priorityLevel = NormalPriority;
+  }
+
+  var previousPriorityLevel = currentPriorityLevel;
+  currentPriorityLevel = priorityLevel;
+
+  try {
+    return eventHandler();
+  } finally {
+    currentPriorityLevel = previousPriorityLevel;
+  }
+}
+```
+
 
 ```
 ReactDOM.createRoot(xx) 创建 tag 为 ConcurrentRoot 的 fiberRoot
@@ -184,7 +229,11 @@ ReactDOM.createRoot(xx) 创建 tag 为 ConcurrentRoot 的 fiberRoot
 用 tag 对应生成的 lane，调用 scheduleUpdateOnFiber
 ```
 
-和同步任务相关的方法：
+```
+performConcurrentWorkOnRoot >> (renderRootConcurrent -> ensureRootIsScheduled)
+```
+
+#### 和同步任务相关的方法
 
 **flushSync**：
 `ReactDOM` 模块暴露的方法，用于 `concurrent` 模式下，提高渲染优先级？
@@ -256,7 +305,7 @@ function flushSyncCallbackQueueImpl() {
 }
 ```
 
-和异步任务相关的方法：
+#### 和异步任务相关的方法
 **unstable_scheduleCallback**：
 
 ```ts
