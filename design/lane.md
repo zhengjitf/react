@@ -89,6 +89,84 @@ function lanePriorityToSchedulerPriority(
 ```
 
 **计算优先级**：
+```ts
+function requestUpdateLane(fiber: Fiber): Lane {
+  // Special cases
+  const mode = fiber.mode;
+  if ((mode & BlockingMode) === NoMode) {
+    return (SyncLane: Lane);
+  } else if ((mode & ConcurrentMode) === NoMode) {
+    return getCurrentUpdateLanePriority() === SyncLanePriority
+      ? (SyncLane: Lane)
+      : (SyncBatchedLane: Lane);
+  } else if (
+    !deferRenderPhaseUpdateToNextBatch &&
+    (executionContext & RenderContext) !== NoContext &&
+    workInProgressRootRenderLanes !== NoLanes
+  ) {
+    // This is a render phase update. These are not officially supported. The
+    // old behavior is to give this the same "thread" (expiration time) as
+    // whatever is currently rendering. So if you call `setState` on a component
+    // that happens later in the same render, it will flush. Ideally, we want to
+    // remove the special case and treat them as if they came from an
+    // interleaved event. Regardless, this pattern is not officially supported.
+    // This behavior is only a fallback. The flag only exists until we can roll
+    // out the setState warning, since existing code might accidentally rely on
+    // the current behavior.
+    return pickArbitraryLane(workInProgressRootRenderLanes);
+  }
+
+  // The algorithm for assigning an update to a lane should be stable for all
+  // updates at the same priority within the same event. To do this, the inputs
+  // to the algorithm must be the same. For example, we use the `renderLanes`
+  // to avoid choosing a lane that is already in the middle of rendering.
+  //
+  // However, the "included" lanes could be mutated in between updates in the
+  // same event, like if you perform an update inside `flushSync`. Or any other
+  // code path that might call `prepareFreshStack`.
+  //
+  // The trick we use is to cache the first of each of these inputs within an
+  // event. Then reset the cached values once we can be sure the event is over.
+  // Our heuristic for that is whenever we enter a concurrent work loop.
+  //
+  // We'll do the same for `currentEventTransitionLane` below.
+  if (currentEventWipLanes === NoLanes) {
+    currentEventWipLanes = workInProgressRootIncludedLanes;
+  }
+
+  const isTransition = requestCurrentTransition() !== NoTransition;
+  if (isTransition) {
+    if (currentEventTransitionLane === NoLane) {
+      currentEventTransitionLane = claimNextTransitionLane();
+    }
+    return currentEventTransitionLane;
+  }
+
+  // TODO: Remove this dependency on the Scheduler priority.
+  // To do that, we're replacing it with an update lane priority.
+  const schedulerPriority = getCurrentPriorityLevel();
+
+  // Find the correct lane based on priorities. Ideally, this would just be
+  // the update lane priority, but for now we're also checking for discrete
+  // updates and falling back to the scheduler priority.
+  let lane;
+  if (
+    // TODO: Temporary. We're removing the concept of discrete updates.
+    (executionContext & DiscreteEventContext) !== NoContext &&
+    schedulerPriority === UserBlockingSchedulerPriority
+  ) {
+    lane = findUpdateLane(InputDiscreteLanePriority);
+  } else if (getCurrentUpdateLanePriority() !== NoLanePriority) {
+    const currentLanePriority = getCurrentUpdateLanePriority();
+    lane = findUpdateLane(currentLanePriority);
+  } else {
+    const eventLanePriority = getCurrentEventPriority();
+    lane = findUpdateLane(eventLanePriority);
+  }
+
+  return lane;
+}
+```
 
 
 **使用优先级**：
