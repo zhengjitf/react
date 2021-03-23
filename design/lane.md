@@ -1,10 +1,10 @@
 [官方相关 issue](https://github.com/facebook/react/pull/18796)
 
 
-**几种更新优先级标识**:
-1. [ReactPriorityLevel](../packages/react-reconciler/src/ReactInternalTypes.js)
-2. [SchedulerPriorityLevel](../packages/scheduler/src/SchedulerPriorities.js)
-3. [LanePriority](../packages/react-reconciler/src/ReactFiberLane.new.js)
+#### 更新优先级标识
+- [ReactPriorityLevel](../packages/react-reconciler/src/ReactInternalTypes.js)
+- [SchedulerPriorityLevel](../packages/scheduler/src/SchedulerPriorities.js)
+- [LanePriority](../packages/react-reconciler/src/ReactFiberLane.new.js)
 
 **互相转换**：
 1. [`ReactPriorityLevel` -> `SchedulerPriorityLevel`](../packages/react-reconciler/src/SchedulerWithReactIntegration.new.js)
@@ -88,7 +88,47 @@ function lanePriorityToSchedulerPriority(
 }
 ```
 
-**计算优先级**：
+#### 优先级分类
+- 事件优先级
+
+
+##### 事件优先级：
+不同事件对应不同的 `LanePriority`
+
+```ts
+function getEventPriority(domEventName: DOMEventName): LanePriority {
+  // ...
+}
+```
+
+#### 计算优先级
+```ts
+export function findUpdateLane(lanePriority: LanePriority): Lane {
+  switch (lanePriority) {
+    case NoLanePriority:
+      break;
+    case SyncLanePriority:
+      return SyncLane;
+    case SyncBatchedLanePriority:
+      return SyncBatchedLane;
+    case InputDiscreteLanePriority:
+      return SyncLane;
+    case InputContinuousLanePriority:
+      return InputContinuousLane;
+    case DefaultLanePriority:
+      return DefaultLane;
+    case TransitionPriority: // Should be handled by findTransitionLane instead
+    case RetryLanePriority: // Should be handled by findRetryLane instead
+      break;
+    case IdleLanePriority:
+      return IdleLane;
+    default:
+      // The remaining priorities are not valid for updates
+      break;
+  }
+}
+```
+
 ```ts
 function requestUpdateLane(fiber: Fiber): Lane {
   // Special cases
@@ -169,7 +209,7 @@ function requestUpdateLane(fiber: Fiber): Lane {
 ```
 
 
-**使用优先级**：
+#### 使用优先级
 1. `scheduleCallback`
 
 以一个优先级注册 `callback`，在适当的时机执行
