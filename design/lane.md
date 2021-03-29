@@ -514,3 +514,16 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
   return newTask;
 }
 ```
+
+```bash
+scheduleUpdateOnFiber
+  |
+  |
+  v
+# 标记 root 有待处理的更新：root.pendingLanes |= lane
+markRootUpdated(root, lane, eventTime);
+```
+
+一些关键方法：
+- `getNextLanes`
+- `markStarvedLanesAsExpired`
