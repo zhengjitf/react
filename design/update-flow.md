@@ -19,6 +19,12 @@
     |
     v
 
+scheduleUpdateOnFiber
+
+    |
+    |
+    v
+
 从fiber到root（`markUpdateLaneFromFiberToRoot`）
 
     |
@@ -39,6 +45,7 @@ render 阶段（`performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`）
 
 commit阶段（`commitRoot`）
 ```
+[更新流程图](https://www.processon.com/diagraming/5eb61543e0b34d5f26f863c6)
 
 #### Update
 
