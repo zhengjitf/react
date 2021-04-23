@@ -527,3 +527,13 @@ markRootUpdated(root, lane, eventTime);
 一些关键方法：
 - `getNextLanes`
 - `markStarvedLanesAsExpired`
+
+
+#### lane 的使用路径（以 setState 更新函数组件为例）
+```
+调用 setState (触发 dispatchAction)
+  |
+  |
+  v
+创建 update 对象 （update 包含的 lane 信息通过 requestUpdateLane 计算得出）
+```
