@@ -102,32 +102,6 @@ function getEventPriority(domEventName: DOMEventName): LanePriority {
 ```
 
 #### 计算优先级
-```ts
-export function findUpdateLane(lanePriority: LanePriority): Lane {
-  switch (lanePriority) {
-    case NoLanePriority:
-      break;
-    case SyncLanePriority:
-      return SyncLane;
-    case SyncBatchedLanePriority:
-      return SyncBatchedLane;
-    case InputDiscreteLanePriority:
-      return SyncLane;
-    case InputContinuousLanePriority:
-      return InputContinuousLane;
-    case DefaultLanePriority:
-      return DefaultLane;
-    case TransitionPriority: // Should be handled by findTransitionLane instead
-    case RetryLanePriority: // Should be handled by findRetryLane instead
-      break;
-    case IdleLanePriority:
-      return IdleLane;
-    default:
-      // The remaining priorities are not valid for updates
-      break;
-  }
-}
-```
 
 ```ts
 function requestUpdateLane(fiber: Fiber): Lane {
@@ -208,6 +182,33 @@ function requestUpdateLane(fiber: Fiber): Lane {
 }
 ```
 
+
+```ts
+export function findUpdateLane(lanePriority: LanePriority): Lane {
+  switch (lanePriority) {
+    case NoLanePriority:
+      break;
+    case SyncLanePriority:
+      return SyncLane;
+    case SyncBatchedLanePriority:
+      return SyncBatchedLane;
+    case InputDiscreteLanePriority:
+      return SyncLane;
+    case InputContinuousLanePriority:
+      return InputContinuousLane;
+    case DefaultLanePriority:
+      return DefaultLane;
+    case TransitionPriority: // Should be handled by findTransitionLane instead
+    case RetryLanePriority: // Should be handled by findRetryLane instead
+      break;
+    case IdleLanePriority:
+      return IdleLane;
+    default:
+      // The remaining priorities are not valid for updates
+      break;
+  }
+}
+```
 
 #### 使用优先级
 1. `scheduleCallback`
