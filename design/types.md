@@ -48,6 +48,7 @@ type FiberRoot = {
     } 
   */
   callbackNode: *;
+  // 当前执行任务的优先级
   callbackPriority: LanePriority;
   // type LaneMap<T> = T[] 长度为 31（lane 数量） 的数组
   eventTimes: LaneMap<number>;
