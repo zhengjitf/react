@@ -171,3 +171,54 @@ function Counter() {
 > 具体见 `renderWithHooks` 对 `didScheduleRenderPhaseUpdateDuringThisPass` 的判断
 
 
+#### Concurrent 模式（异步）
+##### 情况一：事件回调中多次调用 `setState`
+同 `Legacy` 模式
+
+##### 情况二：非 `React` 上下文下多次调用 `setState`
+表现同情况一
+
+**分析**：核心判断逻辑在 `ensureRootIsScheduled` 方法中
+
+```js
+const existingCallbackPriority = root.callbackPriority;
+if (existingCallbackPriority === newCallbackPriority) {
+  // The priority hasn't changed. We can reuse the existing task. Exit.
+  return;
+}
+```
+
+##### 情况三：render 过程中调用 `setState`
+同 `Legacy` 模式
+
+##### 情况四：异步调用 `setState`
+> 注：以下表现是基于当前内部实现，不稳定，后期可能会变化
+
+1. 在 `react` 事件回调上下文下，会同步执行更新（`lane === SyncLane`）
+
+```js
+const handleClick = () => {
+  setState(1)
+  Promise.resolve().then(() => {
+    setState(2)
+  })
+}
+```
+
+**render次数**：2 次
+
+2. 非 `react` 事件回调上下文下，会异步执行更新（`lane === DefaultLane`）
+
+```js
+const handleClick = () => {
+  setTimeout(() => {
+    setState(1)
+    Promise.resolve().then(() => {
+      setState(2)
+    })
+  })
+}
+```
+
+**render次数**：1 次  
+**分析**：内部调用使用的是 `MessageChannel`，触发的是宏任务（异步），微任务会在当前宏任务末尾执行，所以会先于调度回调执行，`setState(2)` 执行时如情况二。（调度回调执行时 `updateQueue` 上已有由 `setState(2)` 生成的 `update` 对象）
