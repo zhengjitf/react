@@ -14,6 +14,8 @@
 ### 调度 passiveEffects
 > 执行条件：当前 fiber 及其子树包含 passiveEffect flag 时
 
+> **关键词**: `useEffect`
+
 
 ### before mutation阶段（执行DOM操作前）
 
