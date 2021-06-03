@@ -194,7 +194,10 @@ if (existingCallbackPriority === newCallbackPriority) {
 ##### 情况四：异步调用 `setState`
 > 注：以下表现是基于当前内部实现，不稳定，后期可能会变化
 
-1. 在 `react` 事件回调上下文下，会同步执行更新（`lane === SyncLane`）
+###### 在 `react` 事件回调上下文下
+> `lane === SyncLane`
+
+会同步执行更新
 
 ```js
 const handleClick = () => {
@@ -207,7 +210,11 @@ const handleClick = () => {
 
 **render次数**：2 次
 
-2. 非 `react` 事件回调上下文下，会异步执行更新（`lane === DefaultLane`）
+###### 非 `react` 事件回调上下文下
+> `lane === DefaultLane`
+
+因为内部调度使用的是 `MessageChannel`（如果不支持使用 `setTimeout`），~~而且根据 `shouldYieldToHost()` 来判断当前帧剩余的时间是否用尽从而暂停未完成的任务（在源码中每个时间片时 5ms，这个值会根据设备的 fps 调整）~~，所以只要异步任务回调早于 `MessageChannel` 回调，如 `Promise`，就只会执行一次 `render`，其余情况如 `setTimeout`、`requestAnimationFrame`
+等就会执行两次
 
 ```js
 const handleClick = () => {
@@ -219,6 +226,3 @@ const handleClick = () => {
   })
 }
 ```
-
-**render次数**：1 次  
-**分析**：内部调用使用的是 `MessageChannel`，触发的是宏任务（异步），微任务会在当前宏任务末尾执行，所以会先于调度回调执行，`setState(2)` 执行时如情况二。（调度回调执行时 `updateQueue` 上已有由 `setState(2)` 生成的 `update` 对象）
