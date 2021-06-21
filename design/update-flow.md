@@ -217,12 +217,27 @@ const handleClick = () => {
 等就会执行两次
 
 ```js
+// 总共执行一次 render
+
 const handleClick = () => {
   setTimeout(() => {
     setState(1)
     Promise.resolve().then(() => {
       setState(2)
     })
+  })
+}
+```
+
+```js
+// 总共执行一次 render
+
+const handleClick = () => {
+  Promise.resolve().then(() => {
+    setState(1)
+  })
+  Promise.resolve().then(() => {
+    setState(2)
   })
 }
 ```
