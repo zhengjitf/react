@@ -38,6 +38,8 @@
 2. `layout` 阶段之后将 `effectList` 赋值给 `rootWithPendingPassiveEffects`
 3. `scheduleCallback` 触发 `flushPassiveEffects`，`flushPassiveEffects` 内部遍历 `rootWithPendingPassiveEffects` -->
 
+注：`commitBeforeMutationEffects` 同 `render` 阶段先递再归，深度优先，先深入到第一个（叶子）节点，进行处理后再往上找到父子节点的相邻节点（sibling）往下深入，如此循环这个过程，直到返回 root 节点
+
 ### mutation阶段（执行DOM操作）
 
 
@@ -66,8 +68,10 @@
 
 当 `fiber.tag` 为 `FunctionComponent`，会调用 `commitHookEffectListUnmount` 。该方法会遍历 `effectList`，执行所有`useLayoutEffect` hook的销毁函数 -->
 
+注：`commitMutationEffects` 遍历过程同 `commitBeforeMutationEffects`
+
 ### layout阶段（执行DOM操作后）
-#### `commitLayoutEffects` => `commitLifeCycles`
+#### `commitLayoutEffects`
 
 > **关键词**：`componentDidMount`, `componentDidUpdate`,`useLayoutEffect`, `ref`
 
@@ -83,4 +87,6 @@
 
 **HostRoot**：
 1. 触发 `ReactDOM.render` 第三个参数指定的回调函数
+
+注：`commitLayoutEffects` 遍历过程同 `commitBeforeMutationEffects`
 

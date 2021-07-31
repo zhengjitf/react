@@ -17,6 +17,8 @@ render 阶段开始于 `performSyncWorkOnRoot` 或 `performConcurrentWorkOnRoot`
 
 “递”和“归”阶段会交错执行直到“归”到 `rootFiber`。至此，`render` 阶段的工作就结束了
 
+注：在这个阶段如果是 mount，会为 `HostComponent` 创建对应的 dom（具体见 `createInstance`），挂载到 fiber.stateNode 上，并将子元素（dom）append 到该 dom （具体见 `appendAllChildren`）
+
 ## 组件什么时候 render ？
 **所有类型的组件**：
 更新组件时，当满足如下条件时，会跳过 `render`，直接复用之前的 `fiber`：（注：这些判断逻辑在 `beginWork` ）
