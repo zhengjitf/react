@@ -654,3 +654,210 @@ function updateImperativeHandle<T>(
   );
 }
 ```
+
+## useId
+### mount
+
+```ts
+function mountId(): string {
+  const hook = mountWorkInProgressHook();
+
+  const root = ((getWorkInProgressRoot(): any): FiberRoot);
+  // TODO: In Fizz, id generation is specific to each server config. Maybe we
+  // should do this in Fiber, too? Deferring this decision for now because
+  // there's no other place to store the prefix except for an internal field on
+  // the public createRoot object, which the fiber tree does not currently have
+  // a reference to.
+  const identifierPrefix = root.identifierPrefix;
+
+  let id;
+  if (getIsHydrating()) {
+    const treeId = getTreeId();
+
+    // Use a captial R prefix for server-generated ids.
+    id = ':' + identifierPrefix + 'R' + treeId;
+
+    // Unless this is the first id at this level, append a number at the end
+    // that represents the position of this useId hook among all the useId
+    // hooks for this fiber.
+    const localId = localIdCounter++;
+    if (localId > 0) {
+      id += 'H' + localId.toString(32);
+    }
+
+    id += ':';
+  } else {
+    // Use a lowercase r prefix for client-generated ids.
+    const globalClientId = globalClientIdCounter++;
+    id = ':' + identifierPrefix + 'r' + globalClientId.toString(32) + ':';
+  }
+
+  hook.memoizedState = id;
+  return id;
+}
+```
+
+分为服务端渲染和客户端渲染两种情况，客户端渲染逻辑比较简单，只是使用一个全局自增的数字转换为32位的字符串作为 id（并不是一个稳定的 id），服务端渲染由 `treeId` 和 `localId` 拼接成 id。`treeId` 和 fiber 树以及当前组件在树中的位置相关，`localId` 和当前 `useId` 在当前层级的位置相关，(每次 render 前 `localId` 都会初始为 0 ?)。
+
+`treeId` 的相关逻辑如下：
+
+```ts
+export function getTreeId(): string {
+  const overflow = treeContextOverflow;
+  const idWithLeadingBit = treeContextId;
+  // 去掉第一位（最左位）：最左位的 1 只是作为结束位标识，用以表示前导 0，比如：00101 作为 Fork 5 of 20 ，treeContextId 即为 0b100101 用以表示需要 5 位，但使用时需去掉最左位
+  const id = idWithLeadingBit & ~getLeadingBit(idWithLeadingBit);
+  return id.toString(32) + overflow;
+}
+```
+
+影响 `treeContextId` 取值的逻辑有以下函数：
+
+```ts
+export function pushTreeId(
+  workInProgress: Fiber,
+  totalChildren: number,
+  index: number,
+) {
+  warnIfNotHydrating();
+
+  idStack[idStackIndex++] = treeContextId;
+  idStack[idStackIndex++] = treeContextOverflow;
+  idStack[idStackIndex++] = treeContextProvider;
+
+  treeContextProvider = workInProgress;
+
+  // eg1: treeContextId = 0b101001000
+  // eg2: treeContextId = 0b101001000(0*20)
+  const baseIdWithLeadingBit = treeContextId;
+  const baseOverflow = treeContextOverflow;
+
+  // The leftmost 1 marks the end of the sequence, non-inclusive. It's not part
+  // of the id; we use it to account for leading 0s.
+  // eg1: baseLength = 9 - 1 = 8
+  // eg2: baseLength = 29 - 1 = 28
+  const baseLength = getBitLength(baseIdWithLeadingBit) - 1;
+  // eg1: baseId = 0b001001000 = 0b01001000
+  // eg2: baseId = 0b001001000(0*20) = 0b01001000(0*20)
+  const baseId = baseIdWithLeadingBit & ~(1 << baseLength);
+
+  // eg1: slot = 0b10 + 1 = 3 = Ob11
+  // eg2: slot = 0b10 + 1 = 3 = Ob11
+  const slot = index + 1;
+  // eg1: length = getBitLength(0b10000) + 8 = 5 + 8 = 13
+  // eg2: length = getBitLength(0b10000) + 28 = 5 + 28 = 33
+  const length = getBitLength(totalChildren) + baseLength;
+
+  // 30 is the max length we can store without overflowing, taking into
+  // consideration the leading 1 we use to mark the end of the sequence.
+  if (length > 30) {
+    // We overflowed the bitwise-safe range. Fall back to slower algorithm.
+    // This branch assumes the length of the base id is greater than 5; it won't
+    // work for smaller ids, because you need 5 bits per character.
+    //
+    // We encode the id in multiple steps: first the base id, then the
+    // remaining digits.
+    //
+    // Each 5 bit sequence corresponds to a single base 32 character. So for
+    // example, if the current id is 23 bits long, we can convert 20 of those
+    // bits into a string of 4 characters, with 3 bits left over.
+    //
+    // First calculate how many bits in the base id represent a complete
+    // sequence of characters.
+    // eg2: numberOfOverflowBits = 28 - (28 % 5) = 25
+    // 每 5 位二进制位表示一个 32 位，numberOfOverflowBits 为可以完整转换 32 位的二进制位的数量（从右向左）
+    const numberOfOverflowBits = baseLength - (baseLength % 5);
+
+    // Then create a bitmask that selects only those bits.
+    // eg2: newOverflowBits = 0b(1*25)
+    const newOverflowBits = (1 << numberOfOverflowBits) - 1;
+
+    // Select the bits, and convert them to a base 32 string.
+    // eg2: newOverflow = (0b01001000(0*20) & 0b(1*25)).toString(32) = (0b01000(0*20)).toString(32)
+    // 即保留右 25 位
+    const newOverflow = (baseId & newOverflowBits).toString(32);
+
+    // Now we can remove those bits from the base id.
+    // eg2: restOfBaseId = 0b01001000(0*20) >> 25 = 0b010
+    // 即删除右 25 位
+    const restOfBaseId = baseId >> numberOfOverflowBits;
+    // eg2: restOfBaseLength = 28 - 25 = 3
+    // restOfBaseLength 为不能完整转换 32 位的二进制位数，即 5 的余数
+    const restOfBaseLength = baseLength - numberOfOverflowBits;
+
+    // Finally, encode the rest of the bits using the normal algorithm. Because
+    // we made more room, this time it won't overflow.
+    // eg2: restOfLength = getBitLength(0b10000) + 1 = 5 + 1 = 6
+    const restOfLength = getBitLength(totalChildren) + restOfBaseLength;
+    // eg2: restOfNewBits = Ob11 << 3 = 0b11000
+    const restOfNewBits = slot << restOfBaseLength;
+    // eg2: id = 0b11000 | 0b010 = 0b11010
+    // 即 5 的余数位的二进制再在左边 + 新的 slot 表示的二进制
+    const id = restOfNewBits | restOfBaseId;
+    // eg2: 新的溢出 = treeContextId 从右到左以5为单位的二进制位转换的32位字符串 + 原有的溢出
+    const overflow = newOverflow + baseOverflow;
+    // eg2: treeContextId = (1 << 6) | 0b11010 = 0b111010  
+    // (1 << restOfLength) 只是为了补0，最左位没有实际含义，使用时会去除这一位
+    treeContextId = (1 << restOfLength) | id;
+    treeContextOverflow = overflow;
+  } else {
+    // Normal path
+    // eg1: newBits = Ob11 << 8 
+    const newBits = slot << baseLength;
+    // eg1: id = (Ob11 << 8) | 0b01001000 => 即将 newBits 放到 baseId 左位
+    const id = newBits | baseId;
+    // eg1: 没有新的溢出
+    const overflow = baseOverflow;
+
+    // 同上一个条件分支，(1 << length) 只是为了保留补零位
+    treeContextId = (1 << length) | id;
+    treeContextOverflow = overflow;
+  }
+}
+```
+
+```ts
+export function popTreeContext(workInProgress: Fiber) {
+  // Restore the previous values.
+
+  // This is a bit more complicated than other context-like modules in Fiber
+  // because the same Fiber may appear on the stack multiple times and for
+  // different reasons. We have to keep popping until the work-in-progress is
+  // no longer at the top of the stack.
+
+  while (workInProgress === treeForkProvider) {
+    treeForkProvider = forkStack[--forkStackIndex];
+    forkStack[forkStackIndex] = null;
+    treeForkCount = forkStack[--forkStackIndex];
+    forkStack[forkStackIndex] = null;
+  }
+
+  while (workInProgress === treeContextProvider) {
+    treeContextProvider = idStack[--idStackIndex];
+    idStack[idStackIndex] = null;
+    treeContextOverflow = idStack[--idStackIndex];
+    idStack[idStackIndex] = null;
+    treeContextId = idStack[--idStackIndex];
+    idStack[idStackIndex] = null;
+  }
+}
+```
+
+```ts
+export function restoreSuspendedTreeContext(
+  workInProgress: Fiber,
+  suspendedContext: TreeContext,
+) {
+  warnIfNotHydrating();
+
+  idStack[idStackIndex++] = treeContextId;
+  idStack[idStackIndex++] = treeContextOverflow;
+  idStack[idStackIndex++] = treeContextProvider;
+
+  treeContextId = suspendedContext.id;
+  treeContextOverflow = suspendedContext.overflow;
+  treeContextProvider = workInProgress;
+}
+```
+
+
