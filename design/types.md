@@ -157,7 +157,7 @@ type Fiber = {
   mode: TypeOfMode;
 
   // Effect
-  flags: Flags; // Placement、Update....
+  flags: Flags; // Placement、Update、...、 Forked
   subtreeFlags: Flags;
   deletions: Array<Fiber> | null;
 

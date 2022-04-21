@@ -712,6 +712,39 @@ export function getTreeId(): string {
 ```
 
 影响 `treeContextId` 取值的逻辑有以下函数：
+注：只在服务端渲染时，以下函数才会被调用
+
+```ts
+export function pushTreeFork(
+  workInProgress: Fiber,
+  totalChildren: number,
+): void {
+  // This is called right after we reconcile an array (or iterator) of child
+  // fibers, because that's the only place where we know how many children in
+  // the whole set without doing extra work later, or storing addtional
+  // information on the fiber.
+  //
+  // That's why this function is separate from pushTreeId — it's called during
+  // the render phase of the fork parent, not the child, which is where we push
+  // the other context values.
+  //
+  // In the Fizz implementation this is much simpler because the child is
+  // rendered in the same callstack as the parent.
+  //
+  // It might be better to just add a `forks` field to the Fiber type. It would
+  // make this module simpler.
+
+  warnIfNotHydrating();
+
+  forkStack[forkStackIndex++] = treeForkCount;
+  forkStack[forkStackIndex++] = treeForkProvider;
+
+  treeForkProvider = workInProgress;
+  treeForkCount = totalChildren;
+}
+```
+`pushTreeFork` 会在 `reconcileChildrenArray` 和 `reconcileChildrenIterator` 中调用，
+
 
 ```ts
 export function pushTreeId(
@@ -816,6 +849,26 @@ export function pushTreeId(
 }
 ```
 
+`pushTreeId` 会在 `beginWork` 以及 `pushMaterializedTreeId` 中被调用，而 `pushMaterializedTreeId` 会在 `updateForwardRef` 和 `updateFunctionComponent` 以及 `mountIndeterminateComponent` 中被调用
+
+即在 render 的深度遍历的‘递’过程，调用 `pushTreeId`（会跳过同级非数组/迭代类型的 fiber 节点，比如只有一个子节点），对应的 ‘归’ 过程，调用 `popTreeContext`
+
+```ts
+export function pushMaterializedTreeId(workInProgress: Fiber) {
+  warnIfNotHydrating();
+
+  // This component materialized an id. This will affect any ids that appear
+  // in its children.
+  const returnFiber = workInProgress.return;
+  if (returnFiber !== null) {
+    const numberOfForks = 1;
+    const slotIndex = 0;
+    pushTreeFork(workInProgress, numberOfForks);
+    pushTreeId(workInProgress, numberOfForks, slotIndex);
+  }
+}
+```
+
 ```ts
 export function popTreeContext(workInProgress: Fiber) {
   // Restore the previous values.
@@ -843,6 +896,9 @@ export function popTreeContext(workInProgress: Fiber) {
 }
 ```
 
+`popTreeContext` 会在 `completeWork`、`unwindWork`、`unwindInterruptedWork` 中被调用
+
+
 ```ts
 export function restoreSuspendedTreeContext(
   workInProgress: Fiber,
@@ -859,5 +915,7 @@ export function restoreSuspendedTreeContext(
   treeContextProvider = workInProgress;
 }
 ```
+
+`restoreSuspendedTreeContext` 会在 `reenterHydrationStateFromDehydratedSuspenseInstance` 中被调用
 
 
