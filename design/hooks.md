@@ -918,4 +918,46 @@ export function restoreSuspendedTreeContext(
 
 `restoreSuspendedTreeContext` 会在 `reenterHydrationStateFromDehydratedSuspenseInstance` 中被调用
 
+## useTransition
+### mountTransition
 
+```ts
+function mountTransition(): [
+  boolean,
+  (callback: () => void, options?: StartTransitionOptions) => void,
+] {
+  const [isPending, setPending] = mountState(false);
+  // The `start` method never changes.
+  const start = startTransition.bind(null, setPending);
+  const hook = mountWorkInProgressHook();
+  hook.memoizedState = start;
+  return [isPending, start];
+}
+```
+
+```ts
+function startTransition(setPending, callback, options) {
+  const previousPriority = getCurrentUpdatePriority();
+  setCurrentUpdatePriority(
+    higherEventPriority(previousPriority, ContinuousEventPriority),
+  );
+
+  // 此处的更新优先级没有变
+  setPending(true);
+
+  const prevTransition = ReactCurrentBatchConfig.transition;
+  ReactCurrentBatchConfig.transition = {};
+  const currentTransition = ReactCurrentBatchConfig.transition;
+
+  try {
+    // 此时优先级对应的 lane 已改为 TransitionLaneX，
+    // TODO (待进一步确认): 如果之前是 defaultLane，则此时已有任务在调度中，这里不会产生新的任务，这里产生的 update 对象和之前的 update 对象都已经放入 updateQueue，但在 updateReducer 中会根据 renderLanes 选择对应优先级的 update 对象算出新的 state，低优先级（比如 Transition）的会被跳过
+    setPending(false);
+    callback();
+  } finally {
+    setCurrentUpdatePriority(previousPriority);
+
+    ReactCurrentBatchConfig.transition = prevTransition;
+  }
+}
+```
