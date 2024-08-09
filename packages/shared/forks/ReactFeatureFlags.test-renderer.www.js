@@ -32,6 +32,7 @@ export const enableScopeAPI = true;
 export const enableCreateEventHandleAPI = false;
 export const enableSuspenseCallback = true;
 export const disableLegacyContext = false;
+export const disableLegacyContextForFunctionComponents = false;
 export const enableTrustedTypesIntegration = false;
 export const disableTextareaChildren = false;
 export const enableSuspenseAvoidThisFallback = true;
@@ -46,6 +47,7 @@ export const enableLegacyFBSupport = false;
 export const enableFilterEmptyStringAttributesDOM = true;
 export const enableGetInspectorDataForInstanceInProduction = false;
 export const enableRenderableContext = false;
+export const enableFabricCompleteRootInCommitPhase = false;
 
 export const enableRetryLaneExpiration = false;
 export const retryLaneExpirationMs = 5000;
@@ -53,10 +55,9 @@ export const syncLaneExpirationMs = 250;
 export const transitionLaneExpirationMs = 5000;
 
 export const disableSchedulerTimeoutInWorkLoop = false;
-export const enableLazyContextPropagation = false;
+export const enableLazyContextPropagation = true;
+export const enableContextProfiling = false;
 export const enableLegacyHidden = false;
-export const forceConcurrentByDefaultForTesting = false;
-export const allowConcurrentByDefault = true;
 
 export const consoleManagedByDevToolsDuringStrictMode = false;
 
@@ -72,7 +73,7 @@ export const enableAsyncActions = true;
 export const alwaysThrottleRetries = true;
 
 export const passChildrenWhenCloningPersistedNodes = false;
-export const enableUseDeferredValueInitialArg = true;
+export const enablePersistedModeClonedFlag = false;
 export const disableClientCache = true;
 
 export const enableServerComponentLogs = true;
@@ -80,7 +81,6 @@ export const enableInfiniteRenderLoopDetection = false;
 
 export const enableRefAsProp = true;
 export const disableStringRefs = false;
-export const enableFastJSX = false;
 
 export const enableReactTestRendererWarning = false;
 export const disableLegacyMode = true;
@@ -90,6 +90,7 @@ export const enableAddPropertiesFastPath = false;
 
 export const renameElementSymbol = false;
 
+export const enableObjectFiber = false;
 export const enableOwnerStacks = false;
 export const enableShallowPropDiffing = false;
 

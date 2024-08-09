@@ -31,7 +31,7 @@ import {currentBridgeProtocol} from 'react-devtools-shared/src/bridge';
 import type {BackendBridge} from 'react-devtools-shared/src/bridge';
 import type {
   InstanceAndStyle,
-  NativeType,
+  HostInstance,
   OwnersList,
   PathFrame,
   PathMatch,
@@ -43,7 +43,7 @@ import type {
   ComponentFilter,
   BrowserTheme,
 } from 'react-devtools-shared/src/frontend/types';
-import {isSynchronousXHRSupported} from './utils';
+import {isSynchronousXHRSupported, isReactNativeEnvironment} from './utils';
 
 const debug = (methodName: string, ...args: Array<string>) => {
   if (__DEBUG__) {
@@ -146,12 +146,12 @@ type PersistedSelection = {
 
 export default class Agent extends EventEmitter<{
   hideNativeHighlight: [],
-  showNativeHighlight: [NativeType],
+  showNativeHighlight: [HostInstance],
   startInspectingNative: [],
   stopInspectingNative: [],
   shutdown: [],
-  traceUpdates: [Set<NativeType>],
-  drawTraceUpdates: [Array<NativeType>],
+  traceUpdates: [Set<HostInstance>],
+  drawTraceUpdates: [Array<HostInstance>],
   disableTraceUpdates: [],
 }> {
   _bridge: BackendBridge;
@@ -188,8 +188,11 @@ export default class Agent extends EventEmitter<{
     this._bridge = bridge;
 
     bridge.addListener('clearErrorsAndWarnings', this.clearErrorsAndWarnings);
-    bridge.addListener('clearErrorsForFiberID', this.clearErrorsForFiberID);
-    bridge.addListener('clearWarningsForFiberID', this.clearWarningsForFiberID);
+    bridge.addListener('clearErrorsForElementID', this.clearErrorsForElementID);
+    bridge.addListener(
+      'clearWarningsForElementID',
+      this.clearWarningsForElementID,
+    );
     bridge.addListener('copyElementPath', this.copyElementPath);
     bridge.addListener('deletePath', this.deletePath);
     bridge.addListener('getBackendVersion', this.getBackendVersion);
@@ -209,8 +212,8 @@ export default class Agent extends EventEmitter<{
     bridge.addListener('stopProfiling', this.stopProfiling);
     bridge.addListener('storeAsGlobal', this.storeAsGlobal);
     bridge.addListener(
-      'syncSelectionFromNativeElementsPanel',
-      this.syncSelectionFromNativeElementsPanel,
+      'syncSelectionFromBuiltinElementsPanel',
+      this.syncSelectionFromBuiltinElementsPanel,
     );
     bridge.addListener('shutdown', this.shutdown);
     bridge.addListener(
@@ -270,16 +273,7 @@ export default class Agent extends EventEmitter<{
     }
   };
 
-  clearErrorsForFiberID: ElementAndRendererID => void = ({id, rendererID}) => {
-    const renderer = this._rendererInterfaces[rendererID];
-    if (renderer == null) {
-      console.warn(`Invalid renderer id "${rendererID}"`);
-    } else {
-      renderer.clearErrorsForFiberID(id);
-    }
-  };
-
-  clearWarningsForFiberID: ElementAndRendererID => void = ({
+  clearErrorsForElementID: ElementAndRendererID => void = ({
     id,
     rendererID,
   }) => {
@@ -287,7 +281,19 @@ export default class Agent extends EventEmitter<{
     if (renderer == null) {
       console.warn(`Invalid renderer id "${rendererID}"`);
     } else {
-      renderer.clearWarningsForFiberID(id);
+      renderer.clearErrorsForElementID(id);
+    }
+  };
+
+  clearWarningsForElementID: ElementAndRendererID => void = ({
+    id,
+    rendererID,
+  }) => {
+    const renderer = this._rendererInterfaces[rendererID];
+    if (renderer == null) {
+      console.warn(`Invalid renderer id "${rendererID}"`);
+    } else {
+      renderer.clearWarningsForElementID(id);
     }
   };
 
@@ -337,31 +343,79 @@ export default class Agent extends EventEmitter<{
     return renderer.getInstanceAndStyle(id);
   }
 
-  getBestMatchingRendererInterface(node: Object): RendererInterface | null {
-    let bestMatch = null;
+  getIDForHostInstance(target: HostInstance): number | null {
+    let bestMatch: null | HostInstance = null;
+    let bestRenderer: null | RendererInterface = null;
+    // Find the nearest ancestor which is mounted by a React.
     for (const rendererID in this._rendererInterfaces) {
       const renderer = ((this._rendererInterfaces[
         (rendererID: any)
       ]: any): RendererInterface);
-      const fiber = renderer.getFiberForNative(node);
-      if (fiber !== null) {
-        // check if fiber.stateNode is matching the original hostInstance
-        if (fiber.stateNode === node) {
-          return renderer;
-        } else if (bestMatch === null) {
-          bestMatch = renderer;
+      const nearestNode: null = renderer.getNearestMountedHostInstance(target);
+      if (nearestNode !== null) {
+        if (nearestNode === target) {
+          // Exact match we can exit early.
+          bestMatch = nearestNode;
+          bestRenderer = renderer;
+          break;
+        }
+        if (
+          bestMatch === null ||
+          (!isReactNativeEnvironment() && bestMatch.contains(nearestNode))
+        ) {
+          // If this is the first match or the previous match contains the new match,
+          // so the new match is a deeper and therefore better match.
+          bestMatch = nearestNode;
+          bestRenderer = renderer;
         }
       }
     }
-    // if an exact match is not found, return the first valid renderer as fallback
-    return bestMatch;
+    if (bestRenderer != null && bestMatch != null) {
+      try {
+        return bestRenderer.getElementIDForHostInstance(bestMatch, true);
+      } catch (error) {
+        // Some old React versions might throw if they can't find a match.
+        // If so we should ignore it...
+      }
+    }
+    return null;
   }
 
-  getIDForNode(node: Object): number | null {
-    const rendererInterface = this.getBestMatchingRendererInterface(node);
-    if (rendererInterface != null) {
+  getComponentNameForHostInstance(target: HostInstance): string | null {
+    // We duplicate this code from getIDForHostInstance to avoid an object allocation.
+    let bestMatch: null | HostInstance = null;
+    let bestRenderer: null | RendererInterface = null;
+    // Find the nearest ancestor which is mounted by a React.
+    for (const rendererID in this._rendererInterfaces) {
+      const renderer = ((this._rendererInterfaces[
+        (rendererID: any)
+      ]: any): RendererInterface);
+      const nearestNode = renderer.getNearestMountedHostInstance(target);
+      if (nearestNode !== null) {
+        if (nearestNode === target) {
+          // Exact match we can exit early.
+          bestMatch = nearestNode;
+          bestRenderer = renderer;
+          break;
+        }
+        if (
+          bestMatch === null ||
+          (!isReactNativeEnvironment() && bestMatch.contains(nearestNode))
+        ) {
+          // If this is the first match or the previous match contains the new match,
+          // so the new match is a deeper and therefore better match.
+          bestMatch = nearestNode;
+          bestRenderer = renderer;
+        }
+      }
+    }
+
+    if (bestRenderer != null && bestMatch != null) {
       try {
-        return rendererInterface.getFiberIDForNative(node, true);
+        const id = bestRenderer.getElementIDForHostInstance(bestMatch, true);
+        if (id) {
+          return bestRenderer.getDisplayNameForElementID(id);
+        }
       } catch (error) {
         // Some old React versions might throw if they can't find a match.
         // If so we should ignore it...
@@ -433,7 +487,7 @@ export default class Agent extends EventEmitter<{
       }
 
       // TODO: If there was a way to change the selected DOM element
-      // in native Elements tab without forcing a switch to it, we'd do it here.
+      // in built-in Elements tab without forcing a switch to it, we'd do it here.
       // For now, it doesn't seem like there is a way to do that:
       // https://github.com/bvaughn/react-devtools-experimental/issues/102
       // (Setting $0 doesn't work, and calling inspect() switches the tab.)
@@ -610,10 +664,10 @@ export default class Agent extends EventEmitter<{
     }
   };
 
-  selectNode(target: Object): void {
-    const id = this.getIDForNode(target);
+  selectNode(target: HostInstance): void {
+    const id = this.getIDForHostInstance(target);
     if (id !== null) {
-      this._bridge.send('selectFiber', id);
+      this._bridge.send('selectElement', id);
     }
   }
 
@@ -652,7 +706,7 @@ export default class Agent extends EventEmitter<{
       }
     };
 
-  syncSelectionFromNativeElementsPanel: () => void = () => {
+  syncSelectionFromBuiltinElementsPanel: () => void = () => {
     const target = window.__REACT_DEVTOOLS_GLOBAL_HOOK__.$0;
     if (target == null) {
       return;
@@ -691,7 +745,7 @@ export default class Agent extends EventEmitter<{
   };
 
   stopInspectingNative: (selected: boolean) => void = selected => {
-    this._bridge.send('stopInspectingNative', selected);
+    this._bridge.send('stopInspectingHost', selected);
   };
 
   storeAsGlobal: StoreAsGlobalParams => void = ({
@@ -762,7 +816,7 @@ export default class Agent extends EventEmitter<{
     }
   };
 
-  onTraceUpdates: (nodes: Set<NativeType>) => void = nodes => {
+  onTraceUpdates: (nodes: Set<HostInstance>) => void = nodes => {
     this.emit('traceUpdates', nodes);
   };
 
@@ -820,7 +874,7 @@ export default class Agent extends EventEmitter<{
           if (prevMatchID !== nextMatchID) {
             if (nextMatchID !== null) {
               // We moved forward, unlocking a deeper node.
-              this._bridge.send('selectFiber', nextMatchID);
+              this._bridge.send('selectElement', nextMatchID);
             }
           }
           if (nextMatch !== null && nextMatch.isFullMatch) {

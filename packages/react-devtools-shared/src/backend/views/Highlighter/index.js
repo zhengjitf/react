@@ -25,16 +25,13 @@ export default function setupHighlighter(
   bridge: BackendBridge,
   agent: Agent,
 ): void {
-  bridge.addListener(
-    'clearNativeElementHighlight',
-    clearNativeElementHighlight,
-  );
-  bridge.addListener('highlightNativeElement', highlightNativeElement);
-  bridge.addListener('shutdown', stopInspectingNative);
-  bridge.addListener('startInspectingNative', startInspectingNative);
-  bridge.addListener('stopInspectingNative', stopInspectingNative);
+  bridge.addListener('clearHostInstanceHighlight', clearHostInstanceHighlight);
+  bridge.addListener('highlightHostInstance', highlightHostInstance);
+  bridge.addListener('shutdown', stopInspectingHost);
+  bridge.addListener('startInspectingHost', startInspectingHost);
+  bridge.addListener('stopInspectingHost', stopInspectingHost);
 
-  function startInspectingNative() {
+  function startInspectingHost() {
     registerListenersOnWindow(window);
   }
 
@@ -53,7 +50,7 @@ export default function setupHighlighter(
     }
   }
 
-  function stopInspectingNative() {
+  function stopInspectingHost() {
     hideOverlay(agent);
     removeListenersOnWindow(window);
     iframesListeningTo.forEach(function (frame) {
@@ -81,22 +78,22 @@ export default function setupHighlighter(
     }
   }
 
-  function clearNativeElementHighlight() {
+  function clearHostInstanceHighlight() {
     hideOverlay(agent);
   }
 
-  function highlightNativeElement({
+  function highlightHostInstance({
     displayName,
     hideAfterTimeout,
     id,
-    openNativeElementsPanel,
+    openBuiltinElementsPanel,
     rendererID,
     scrollIntoView,
   }: {
     displayName: string | null,
     hideAfterTimeout: boolean,
     id: number,
-    openNativeElementsPanel: boolean,
+    openBuiltinElementsPanel: boolean,
     rendererID: number,
     scrollIntoView: boolean,
     ...
@@ -110,14 +107,12 @@ export default function setupHighlighter(
     }
 
     // In some cases fiber may already be unmounted
-    if (!renderer.hasFiberWithId(id)) {
+    if (!renderer.hasElementWithId(id)) {
       hideOverlay(agent);
       return;
     }
 
-    const nodes: ?Array<HTMLElement> = (renderer.findNativeNodesForFiberID(
-      id,
-    ): any);
+    const nodes = renderer.findHostInstancesForElementID(id);
 
     if (nodes != null && nodes[0] != null) {
       const node = nodes[0];
@@ -130,9 +125,9 @@ export default function setupHighlighter(
 
       showOverlay(nodes, displayName, agent, hideAfterTimeout);
 
-      if (openNativeElementsPanel) {
+      if (openBuiltinElementsPanel) {
         window.__REACT_DEVTOOLS_GLOBAL_HOOK__.$0 = node;
-        bridge.send('syncSelectionToNativeElementsPanel');
+        bridge.send('syncSelectionToBuiltinElementsPanel');
       }
     } else {
       hideOverlay(agent);
@@ -143,9 +138,9 @@ export default function setupHighlighter(
     event.preventDefault();
     event.stopPropagation();
 
-    stopInspectingNative();
+    stopInspectingHost();
 
-    bridge.send('stopInspectingNative', true);
+    bridge.send('stopInspectingHost', true);
   }
 
   function onMouseEvent(event: MouseEvent) {
@@ -157,7 +152,7 @@ export default function setupHighlighter(
     event.preventDefault();
     event.stopPropagation();
 
-    selectFiberForNode(getEventTarget(event));
+    selectElementForNode(getEventTarget(event));
   }
 
   let lastHoveredNode: HTMLElement | null = null;
@@ -186,7 +181,7 @@ export default function setupHighlighter(
     // It will be inferred from DOM tag and Fiber owner.
     showOverlay([target], null, agent, false);
 
-    selectFiberForNode(target);
+    selectElementForNode(target);
   }
 
   function onPointerUp(event: MouseEvent) {
@@ -194,11 +189,11 @@ export default function setupHighlighter(
     event.stopPropagation();
   }
 
-  const selectFiberForNode = throttle(
+  const selectElementForNode = throttle(
     memoize((node: HTMLElement) => {
-      const id = agent.getIDForNode(node);
+      const id = agent.getIDForHostInstance(node);
       if (id !== null) {
-        bridge.send('selectFiber', id);
+        bridge.send('selectElement', id);
       }
     }),
     200,

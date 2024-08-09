@@ -75,16 +75,7 @@ export type WorkTagMap = {
   Throw: WorkTag,
 };
 
-// TODO: If it's useful for the frontend to know which types of data an Element has
-// (e.g. props, state, context, hooks) then we could add a bitmask field for this
-// to keep the number of attributes small.
-export type FiberData = {
-  key: string | null,
-  displayName: string | null,
-  type: ElementType,
-};
-
-export type NativeType = Object;
+export type HostInstance = Object;
 export type RendererID = number;
 
 type Dispatcher = any;
@@ -95,16 +86,15 @@ type SharedInternalsSubset = {
 };
 export type CurrentDispatcherRef = SharedInternalsSubset;
 
-export type GetDisplayNameForFiberID = (
-  id: number,
-  findNearestUnfilteredAncestor?: boolean,
-) => string | null;
+export type GetDisplayNameForElementID = (id: number) => string | null;
 
-export type GetFiberIDForNative = (
-  component: NativeType,
+export type GetElementIDForHostInstance = (
+  component: HostInstance,
   findNearestUnfilteredAncestor?: boolean,
 ) => number | null;
-export type FindNativeNodesForFiberID = (id: number) => ?Array<NativeType>;
+export type FindHostInstancesForElementID = (
+  id: number,
+) => null | $ReadOnlyArray<HostInstance>;
 
 export type ReactProviderType<T> = {
   $$typeof: symbol | number,
@@ -116,7 +106,7 @@ export type Lane = number;
 export type Lanes = number;
 
 export type ReactRenderer = {
-  findFiberByHostInstance: (hostInstance: NativeType) => Fiber | null,
+  findFiberByHostInstance: (hostInstance: HostInstance) => Fiber | null,
   version: string,
   rendererPackageName: string,
   bundleType: BundleType,
@@ -359,20 +349,22 @@ type Type = 'props' | 'hooks' | 'state' | 'context';
 export type RendererInterface = {
   cleanup: () => void,
   clearErrorsAndWarnings: () => void,
-  clearErrorsForFiberID: (id: number) => void,
-  clearWarningsForFiberID: (id: number) => void,
+  clearErrorsForElementID: (id: number) => void,
+  clearWarningsForElementID: (id: number) => void,
   deletePath: (
     type: Type,
     id: number,
     hookID: ?number,
     path: Array<string | number>,
   ) => void,
-  findNativeNodesForFiberID: FindNativeNodesForFiberID,
+  findHostInstancesForElementID: FindHostInstancesForElementID,
   flushInitialOperations: () => void,
   getBestMatchForTrackedPath: () => PathMatch | null,
-  getFiberForNative: (component: NativeType) => Fiber | null,
-  getFiberIDForNative: GetFiberIDForNative,
-  getDisplayNameForFiberID: GetDisplayNameForFiberID,
+  getNearestMountedHostInstance: (
+    component: HostInstance,
+  ) => HostInstance | null,
+  getElementIDForHostInstance: GetElementIDForHostInstance,
+  getDisplayNameForElementID: GetDisplayNameForElementID,
   getInstanceAndStyle(id: number): InstanceAndStyle,
   getProfilingData(): ProfilingDataBackend,
   getOwnersList: (id: number) => Array<SerializedElement> | null,
@@ -384,7 +376,7 @@ export type RendererInterface = {
   handleCommitFiberRoot: (fiber: Object, commitPriority?: number) => void,
   handleCommitFiberUnmount: (fiber: Object) => void,
   handlePostCommitFiberRoot: (fiber: Object) => void,
-  hasFiberWithId: (id: number) => boolean,
+  hasElementWithId: (id: number) => boolean,
   inspectElement: (
     requestID: number,
     id: number,
