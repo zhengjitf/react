@@ -92,6 +92,10 @@ export const enableHalt = __EXPERIMENTAL__;
 
 export const enableViewTransition = __EXPERIMENTAL__;
 
+export const enableSwipeTransition = __EXPERIMENTAL__;
+
+export const enableScrollEndPolyfill = __EXPERIMENTAL__;
+
 /**
  * Switches the Fabric API from doing layout in commit work instead of complete work.
  */
@@ -132,8 +136,6 @@ export const passChildrenWhenCloningPersistedNodes = false;
  */
 export const enablePersistedModeClonedFlag = false;
 
-export const enableOwnerStacks = __EXPERIMENTAL__;
-
 export const enableShallowPropDiffing = false;
 
 export const enableSiblingPrerendering = true;
@@ -155,7 +157,11 @@ export const enableInfiniteRenderLoopDetection = false;
 /**
  * Experimental new hook for better managing resources in effects.
  */
-export const enableUseResourceEffectHook = false;
+export const enableUseEffectCRUDOverload = false;
+
+export const enableFastAddPropertiesInDiffing = true;
+
+export const enableLazyPublicInstanceInFabric = false;
 
 // -----------------------------------------------------------------------------
 // Ready for next major.
