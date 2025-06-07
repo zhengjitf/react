@@ -1,4 +1,7 @@
 import * as React from 'react';
+import {renderToPipeableStream} from 'react-server-dom-webpack/server';
+import {createFromNodeStream} from 'react-server-dom-webpack/client';
+import {PassThrough, Readable} from 'stream';
 
 import Container from './Container.js';
 
@@ -30,20 +33,68 @@ function Foo({children}) {
   return <div>{children}</div>;
 }
 
+async function delay(text, ms) {
+  return new Promise(resolve => setTimeout(() => resolve(text), ms));
+}
+
 async function Bar({children}) {
-  await new Promise(resolve => setTimeout(() => resolve('deferred text'), 10));
+  await delay('deferred text', 10);
   return <div>{children}</div>;
 }
 
-async function ServerComponent() {
-  await new Promise(resolve => setTimeout(() => resolve('deferred text'), 50));
+async function ThirdPartyComponent() {
+  return delay('hello from a 3rd party', 30);
 }
 
-export default async function App({prerender}) {
+// Using Web streams for tee'ing convenience here.
+let cachedThirdPartyReadableWeb;
+
+// We create the Component outside of AsyncLocalStorage so that it has no owner.
+// That way it gets the owner from the call to createFromNodeStream.
+const thirdPartyComponent = <ThirdPartyComponent />;
+
+function fetchThirdParty(noCache) {
+  if (cachedThirdPartyReadableWeb && !noCache) {
+    const [readableWeb1, readableWeb2] = cachedThirdPartyReadableWeb.tee();
+    cachedThirdPartyReadableWeb = readableWeb1;
+
+    return createFromNodeStream(Readable.fromWeb(readableWeb2), {
+      moduleMap: {},
+      moduleLoading: {},
+    });
+  }
+
+  const stream = renderToPipeableStream(
+    thirdPartyComponent,
+    {},
+    {environmentName: 'third-party'}
+  );
+
+  const readable = new PassThrough();
+  // React currently only supports piping to one stream, so we convert, tee, and
+  // convert back again.
+  // TODO: Switch to web streams without converting when #33442 has landed.
+  const [readableWeb1, readableWeb2] = Readable.toWeb(readable).tee();
+  cachedThirdPartyReadableWeb = readableWeb1;
+  const result = createFromNodeStream(Readable.fromWeb(readableWeb2), {
+    moduleMap: {},
+    moduleLoading: {},
+  });
+  stream.pipe(readable);
+
+  return result;
+}
+
+async function ServerComponent({noCache}) {
+  await delay('deferred text', 50);
+  return await fetchThirdParty(noCache);
+}
+
+export default async function App({prerender, noCache}) {
   const res = await fetch('http://localhost:3001/todos');
   const todos = await res.json();
 
-  const dedupedChild = <ServerComponent />;
+  const dedupedChild = <ServerComponent noCache={noCache} />;
   const message = getServerState();
   return (
     <html lang="en">
