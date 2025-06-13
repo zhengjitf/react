@@ -13,6 +13,7 @@ import type {
   ReactComponentInfo,
   ReactEnvironmentInfo,
   ReactAsyncInfo,
+  ReactIOInfo,
   ReactTimeInfo,
   ReactStackTrace,
   ReactFunctionLocation,
@@ -47,6 +48,7 @@ import {
   enablePostpone,
   enableProfilerTimer,
   enableComponentPerformanceTrack,
+  enableAsyncDebugInfo,
 } from 'shared/ReactFeatureFlags';
 
 import {
@@ -76,6 +78,8 @@ import {
   logComponentRender,
   logDedupedComponentRender,
   logComponentErrored,
+  logIOInfo,
+  logComponentAwait,
 } from './ReactFlightPerformanceTrack';
 
 import {
@@ -261,6 +265,27 @@ ReactPromise.prototype.then = function <T>(
     case RESOLVED_MODULE:
       initializeModuleChunk(chunk);
       break;
+  }
+  if (__DEV__ && enableAsyncDebugInfo) {
+    // Because only native Promises get picked up when we're awaiting we need to wrap
+    // this in a native Promise in DEV. This means that these callbacks are no longer sync
+    // but the lazy initialization is still sync and the .value can be inspected after,
+    // allowing it to be read synchronously anyway.
+    const resolveCallback = resolve;
+    const rejectCallback = reject;
+    const wrapperPromise: Promise<T> = new Promise((res, rej) => {
+      resolve = value => {
+        // $FlowFixMe
+        wrapperPromise._debugInfo = this._debugInfo;
+        res(value);
+      };
+      reject = reason => {
+        // $FlowFixMe
+        wrapperPromise._debugInfo = this._debugInfo;
+        rej(reason);
+      };
+    });
+    wrapperPromise.then(resolveCallback, rejectCallback);
   }
   // The status might have changed after initialization.
   switch (chunk.status) {
@@ -672,6 +697,14 @@ function nullRefGetter() {
   }
 }
 
+function getIOInfoTaskName(ioInfo: ReactIOInfo): string {
+  return ioInfo.name || 'unknown';
+}
+
+function getAsyncInfoTaskName(asyncInfo: ReactAsyncInfo): string {
+  return 'await ' + getIOInfoTaskName(asyncInfo.awaited);
+}
+
 function getServerComponentTaskName(componentInfo: ReactComponentInfo): string {
   return '<' + (componentInfo.name || '...') + '>';
 }
@@ -801,11 +834,17 @@ function createElement(
         console,
         getTaskName(type),
       );
-      const callStack = buildFakeCallStack(response, stack, env, createTaskFn);
+      const callStack = buildFakeCallStack(
+        response,
+        stack,
+        env,
+        false,
+        createTaskFn,
+      );
       // This owner should ideally have already been initialized to avoid getting
       // user stack frames on the stack.
       const ownerTask =
-        owner === null ? null : initializeFakeTask(response, owner, env);
+        owner === null ? null : initializeFakeTask(response, owner);
       if (ownerTask === null) {
         const rootTask = response._debugRootTask;
         if (rootTask != null) {
@@ -2122,6 +2161,7 @@ function resolveErrorDev(
     response,
     stack,
     env,
+    false,
     // $FlowFixMe[incompatible-use]
     Error.bind(
       null,
@@ -2184,6 +2224,7 @@ function resolvePostponeDev(
     response,
     stack,
     env,
+    false,
     // $FlowFixMe[incompatible-use]
     Error.bind(null, reason || ''),
   );
@@ -2392,12 +2433,17 @@ function buildFakeCallStack<T>(
   response: Response,
   stack: ReactStackTrace,
   environmentName: string,
+  useEnclosingLine: boolean,
   innerCall: () => T,
 ): () => T {
   let callStack = innerCall;
   for (let i = 0; i < stack.length; i++) {
     const frame = stack[i];
-    const frameKey = frame.join('-') + '-' + environmentName;
+    const frameKey =
+      frame.join('-') +
+      '-' +
+      environmentName +
+      (useEnclosingLine ? '-e' : '-n');
     let fn = fakeFunctionCache.get(frameKey);
     if (fn === undefined) {
       const [name, filename, line, col, enclosingLine, enclosingCol] = frame;
@@ -2411,8 +2457,8 @@ function buildFakeCallStack<T>(
         sourceMap,
         line,
         col,
-        enclosingLine,
-        enclosingCol,
+        useEnclosingLine ? line : enclosingLine,
+        useEnclosingLine ? col : enclosingCol,
         environmentName,
       );
       // TODO: This cache should technically live on the response since the _debugFindSourceMapURL
@@ -2447,55 +2493,61 @@ function getRootTask(
 
 function initializeFakeTask(
   response: Response,
-  debugInfo: ReactComponentInfo | ReactAsyncInfo,
-  childEnvironmentName: string,
+  debugInfo: ReactComponentInfo | ReactAsyncInfo | ReactIOInfo,
 ): null | ConsoleTask {
   if (!supportsCreateTask) {
     return null;
   }
-  const componentInfo: ReactComponentInfo = (debugInfo: any); // Refined
   if (debugInfo.stack == null) {
     // If this is an error, we should've really already initialized the task.
     // If it's null, we can't initialize a task.
     return null;
   }
+  const cachedEntry = debugInfo.debugTask;
+  if (cachedEntry !== undefined) {
+    return cachedEntry;
+  }
+
+  // Workaround for a bug where Chrome Performance tracking uses the enclosing line/column
+  // instead of the callsite. For ReactAsyncInfo/ReactIOInfo, the only thing we're going
+  // to use the fake task for is the Performance tracking so we encode the enclosing line/
+  // column at the callsite to get a better line number. We could do this for Components too
+  // but we're going to use those for other things too like console logs and it's not worth
+  // duplicating. If this bug is every fixed in Chrome, this should be set to false.
+  const useEnclosingLine = debugInfo.key === undefined;
+
   const stack = debugInfo.stack;
   const env: string =
-    componentInfo.env == null
+    debugInfo.env == null ? response._rootEnvironmentName : debugInfo.env;
+  const ownerEnv: string =
+    debugInfo.owner == null || debugInfo.owner.env == null
       ? response._rootEnvironmentName
-      : componentInfo.env;
-  if (env !== childEnvironmentName) {
+      : debugInfo.owner.env;
+  const ownerTask =
+    debugInfo.owner == null
+      ? null
+      : initializeFakeTask(response, debugInfo.owner);
+  const taskName =
     // This is the boundary between two environments so we'll annotate the task name.
-    // That is unusual so we don't cache it.
-    const ownerTask =
-      componentInfo.owner == null
-        ? null
-        : initializeFakeTask(response, componentInfo.owner, env);
-    return buildFakeTask(
-      response,
-      ownerTask,
-      stack,
-      '"use ' + childEnvironmentName.toLowerCase() + '"',
-      env,
-    );
-  } else {
-    const cachedEntry = componentInfo.debugTask;
-    if (cachedEntry !== undefined) {
-      return cachedEntry;
-    }
-    const ownerTask =
-      componentInfo.owner == null
-        ? null
-        : initializeFakeTask(response, componentInfo.owner, env);
-    // $FlowFixMe[cannot-write]: We consider this part of initialization.
-    return (componentInfo.debugTask = buildFakeTask(
-      response,
-      ownerTask,
-      stack,
-      getServerComponentTaskName(componentInfo),
-      env,
-    ));
-  }
+    // We assume that the stack frame of the entry into the new environment was done
+    // from the old environment. So we use the owner's environment as the current.
+    env !== ownerEnv
+      ? '"use ' + env.toLowerCase() + '"'
+      : // Some unfortunate pattern matching to refine the type.
+        debugInfo.key !== undefined
+        ? getServerComponentTaskName(((debugInfo: any): ReactComponentInfo))
+        : debugInfo.name !== undefined
+          ? getIOInfoTaskName(((debugInfo: any): ReactIOInfo))
+          : getAsyncInfoTaskName(((debugInfo: any): ReactAsyncInfo));
+  // $FlowFixMe[cannot-write]: We consider this part of initialization.
+  return (debugInfo.debugTask = buildFakeTask(
+    response,
+    ownerTask,
+    stack,
+    taskName,
+    ownerEnv,
+    useEnclosingLine,
+  ));
 }
 
 function buildFakeTask(
@@ -2504,9 +2556,16 @@ function buildFakeTask(
   stack: ReactStackTrace,
   taskName: string,
   env: string,
+  useEnclosingLine: boolean,
 ): ConsoleTask {
   const createTaskFn = (console: any).createTask.bind(console, taskName);
-  const callStack = buildFakeCallStack(response, stack, env, createTaskFn);
+  const callStack = buildFakeCallStack(
+    response,
+    stack,
+    env,
+    useEnclosingLine,
+    createTaskFn,
+  );
   if (ownerTask === null) {
     const rootTask = getRootTask(response, env);
     if (rootTask != null) {
@@ -2529,6 +2588,7 @@ const createFakeJSXCallStack = {
       response,
       stack,
       environmentName,
+      false,
       fakeJSXCallSite,
     );
     return callStackForError();
@@ -2555,7 +2615,7 @@ function fakeJSXCallSite() {
 
 function initializeFakeStack(
   response: Response,
-  debugInfo: ReactComponentInfo | ReactAsyncInfo,
+  debugInfo: ReactComponentInfo | ReactAsyncInfo | ReactIOInfo,
 ): void {
   const cachedEntry = debugInfo.debugStack;
   if (cachedEntry !== undefined) {
@@ -2589,26 +2649,30 @@ function resolveDebugInfo(
       'resolveDebugInfo should never be called in production mode. This is a bug in React.',
     );
   }
-  // We eagerly initialize the fake task because this resolving happens outside any
-  // render phase so we're not inside a user space stack at this point. If we waited
-  // to initialize it when we need it, we might be inside user code.
-  const env =
-    debugInfo.env === undefined ? response._rootEnvironmentName : debugInfo.env;
   if (debugInfo.stack !== undefined) {
     const componentInfoOrAsyncInfo: ReactComponentInfo | ReactAsyncInfo =
       // $FlowFixMe[incompatible-type]
       debugInfo;
-    initializeFakeTask(response, componentInfoOrAsyncInfo, env);
+    // We eagerly initialize the fake task because this resolving happens outside any
+    // render phase so we're not inside a user space stack at this point. If we waited
+    // to initialize it when we need it, we might be inside user code.
+    initializeFakeTask(response, componentInfoOrAsyncInfo);
   }
-  if (debugInfo.owner === null && response._debugRootOwner != null) {
-    // $FlowFixMe[prop-missing] By narrowing `owner` to `null`, we narrowed `debugInfo` to `ReactComponentInfo`
-    const componentInfo: ReactComponentInfo = debugInfo;
+  if (debugInfo.owner == null && response._debugRootOwner != null) {
+    const componentInfoOrAsyncInfo: ReactComponentInfo | ReactAsyncInfo =
+      // $FlowFixMe: By narrowing `owner` to `null`, we narrowed `debugInfo` to `ReactComponentInfo`
+      debugInfo;
     // $FlowFixMe[cannot-write]
-    componentInfo.owner = response._debugRootOwner;
+    componentInfoOrAsyncInfo.owner = response._debugRootOwner;
+    // We clear the parsed stack frames to indicate that it needs to be re-parsed from debugStack.
+    // $FlowFixMe[cannot-write]
+    componentInfoOrAsyncInfo.stack = null;
     // We override the stack if we override the owner since the stack where the root JSX
     // was created on the server isn't very useful but where the request was made is.
     // $FlowFixMe[cannot-write]
-    componentInfo.debugStack = response._debugRootStack;
+    componentInfoOrAsyncInfo.debugStack = response._debugRootStack;
+    // $FlowFixMe[cannot-write]
+    componentInfoOrAsyncInfo.debugTask = response._debugRootTask;
   } else if (debugInfo.stack !== undefined) {
     const componentInfoOrAsyncInfo: ReactComponentInfo | ReactAsyncInfo =
       // $FlowFixMe[incompatible-type]
@@ -2664,10 +2728,11 @@ const replayConsoleWithCallStack = {
         response,
         stackTrace,
         env,
+        false,
         bindToConsole(methodName, args, env),
       );
       if (owner != null) {
-        const task = initializeFakeTask(response, owner, env);
+        const task = initializeFakeTask(response, owner);
         initializeFakeStack(response, owner);
         if (task !== null) {
           task.run(callStack);
@@ -2740,6 +2805,51 @@ function resolveConsoleEntry(
   );
 }
 
+function initializeIOInfo(response: Response, ioInfo: ReactIOInfo): void {
+  if (ioInfo.stack !== undefined) {
+    initializeFakeTask(response, ioInfo);
+    initializeFakeStack(response, ioInfo);
+  }
+  // Adjust the time to the current environment's time space.
+  // $FlowFixMe[cannot-write]
+  ioInfo.start += response._timeOrigin;
+  // $FlowFixMe[cannot-write]
+  ioInfo.end += response._timeOrigin;
+
+  logIOInfo(ioInfo, response._rootEnvironmentName);
+}
+
+function resolveIOInfo(
+  response: Response,
+  id: number,
+  model: UninitializedModel,
+): void {
+  const chunks = response._chunks;
+  let chunk = chunks.get(id);
+  if (!chunk) {
+    chunk = createResolvedModelChunk(response, model);
+    chunks.set(id, chunk);
+    initializeModelChunk(chunk);
+  } else {
+    resolveModelChunk(chunk, model);
+    if (chunk.status === RESOLVED_MODEL) {
+      initializeModelChunk(chunk);
+    }
+  }
+  if (chunk.status === INITIALIZED) {
+    initializeIOInfo(response, chunk.value);
+  } else {
+    chunk.then(
+      v => {
+        initializeIOInfo(response, v);
+      },
+      e => {
+        // Ignore debug info errors for now. Unnecessary noise.
+      },
+    );
+  }
+}
+
 function mergeBuffer(
   buffer: Array<Uint8Array>,
   lastChunk: Uint8Array,
@@ -2792,6 +2902,46 @@ function resolveTypedArray(
   resolveBuffer(response, id, view);
 }
 
+function logComponentInfo(
+  response: Response,
+  root: SomeChunk<any>,
+  componentInfo: ReactComponentInfo,
+  trackIdx: number,
+  startTime: number,
+  componentEndTime: number,
+  childrenEndTime: number,
+  isLastComponent: boolean,
+): void {
+  // $FlowFixMe: Refined.
+  if (
+    isLastComponent &&
+    root.status === ERRORED &&
+    root.reason !== response._closedReason
+  ) {
+    // If this is the last component to render before this chunk rejected, then conceptually
+    // this component errored. If this was a cancellation then it wasn't this component that
+    // errored.
+    logComponentErrored(
+      componentInfo,
+      trackIdx,
+      startTime,
+      componentEndTime,
+      childrenEndTime,
+      response._rootEnvironmentName,
+      root.reason,
+    );
+  } else {
+    logComponentRender(
+      componentInfo,
+      trackIdx,
+      startTime,
+      componentEndTime,
+      childrenEndTime,
+      response._rootEnvironmentName,
+    );
+  }
+}
+
 function flushComponentPerformance(
   response: Response,
   root: SomeChunk<any>,
@@ -2828,6 +2978,7 @@ function flushComponentPerformance(
         trackIdx,
         parentEndTime,
         previousEndTime,
+        response._rootEnvironmentName,
       );
     }
     // Since we didn't bump the track this time, we just return the same track.
@@ -2844,23 +2995,22 @@ function flushComponentPerformance(
 
   // First find the start time of the first component to know if it was running
   // in parallel with the previous.
-  const debugInfo = root._debugInfo;
+  const debugInfo = __DEV__ && root._debugInfo;
   if (debugInfo) {
-    for (let i = 1; i < debugInfo.length; i++) {
+    let startTime = 0;
+    for (let i = 0; i < debugInfo.length; i++) {
       const info = debugInfo[i];
+      if (typeof info.time === 'number') {
+        startTime = info.time;
+      }
       if (typeof info.name === 'string') {
-        // $FlowFixMe: Refined.
-        const startTimeInfo = debugInfo[i - 1];
-        if (typeof startTimeInfo.time === 'number') {
-          const startTime = startTimeInfo.time;
-          if (startTime < trackTime) {
-            // The start time of this component is before the end time of the previous
-            // component on this track so we need to bump the next one to a parallel track.
-            trackIdx++;
-          }
-          trackTime = startTime;
-          break;
+        if (startTime < trackTime) {
+          // The start time of this component is before the end time of the previous
+          // component on this track so we need to bump the next one to a parallel track.
+          trackIdx++;
         }
+        trackTime = startTime;
+        break;
       }
     }
     for (let i = debugInfo.length - 1; i >= 0; i--) {
@@ -2868,6 +3018,7 @@ function flushComponentPerformance(
       if (typeof info.time === 'number') {
         if (info.time > parentEndTime) {
           parentEndTime = info.time;
+          break; // We assume the highest number is at the end.
         }
       }
     }
@@ -2895,61 +3046,72 @@ function flushComponentPerformance(
     }
     childTrackIdx = childResult.track;
     const childEndTime = childResult.endTime;
-    childTrackTime = childEndTime;
+    if (childEndTime > childTrackTime) {
+      childTrackTime = childEndTime;
+    }
     if (childEndTime > childrenEndTime) {
       childrenEndTime = childEndTime;
     }
   }
 
   if (debugInfo) {
-    let endTime = 0;
+    // Write debug info in reverse order (just like stack traces).
+    let componentEndTime = 0;
     let isLastComponent = true;
+    let endTime = -1;
+    let endTimeIdx = -1;
     for (let i = debugInfo.length - 1; i >= 0; i--) {
       const info = debugInfo[i];
-      if (typeof info.time === 'number') {
-        endTime = info.time;
-        if (endTime > childrenEndTime) {
-          childrenEndTime = endTime;
-        }
+      if (typeof info.time !== 'number') {
+        continue;
       }
-      if (typeof info.name === 'string' && i > 0) {
-        // $FlowFixMe: Refined.
-        const componentInfo: ReactComponentInfo = info;
-        const startTimeInfo = debugInfo[i - 1];
-        if (typeof startTimeInfo.time === 'number') {
-          const startTime = startTimeInfo.time;
-          if (
-            isLastComponent &&
-            root.status === ERRORED &&
-            root.reason !== response._closedReason
-          ) {
-            // If this is the last component to render before this chunk rejected, then conceptually
-            // this component errored. If this was a cancellation then it wasn't this component that
-            // errored.
-            logComponentErrored(
+      if (componentEndTime === 0) {
+        // Last timestamp is the end of the last component.
+        componentEndTime = info.time;
+      }
+      const time = info.time;
+      if (endTimeIdx > -1) {
+        // Now that we know the start and end time, we can emit the entries between.
+        for (let j = endTimeIdx - 1; j > i; j--) {
+          const candidateInfo = debugInfo[j];
+          if (typeof candidateInfo.name === 'string') {
+            if (componentEndTime > childrenEndTime) {
+              childrenEndTime = componentEndTime;
+            }
+            // $FlowFixMe: Refined.
+            const componentInfo: ReactComponentInfo = candidateInfo;
+            logComponentInfo(
+              response,
+              root,
               componentInfo,
               trackIdx,
-              startTime,
-              endTime,
+              time,
+              componentEndTime,
               childrenEndTime,
-              response._rootEnvironmentName,
-              root.reason,
+              isLastComponent,
             );
-          } else {
-            logComponentRender(
-              componentInfo,
+            componentEndTime = time; // The end time of previous component is the start time of the next.
+            // Track the root most component of the result for deduping logging.
+            result.component = componentInfo;
+            isLastComponent = false;
+          } else if (candidateInfo.awaited) {
+            if (endTime > childrenEndTime) {
+              childrenEndTime = endTime;
+            }
+            // $FlowFixMe: Refined.
+            const asyncInfo: ReactAsyncInfo = candidateInfo;
+            logComponentAwait(
+              asyncInfo,
               trackIdx,
-              startTime,
+              time,
               endTime,
-              childrenEndTime,
               response._rootEnvironmentName,
             );
           }
-          // Track the root most component of the result for deduping logging.
-          result.component = componentInfo;
         }
-        isLastComponent = false;
       }
+      endTime = time; // The end time of the next entry is this time.
+      endTimeIdx = i;
     }
   }
   result.endTime = childrenEndTime;
@@ -3097,6 +3259,17 @@ function processFullStringRow(
             },
           );
         }
+        return;
+      }
+      // Fallthrough to share the error with Console entries.
+    }
+    case 74 /* "J" */: {
+      if (
+        enableProfilerTimer &&
+        enableComponentPerformanceTrack &&
+        enableAsyncDebugInfo
+      ) {
+        resolveIOInfo(response, id, row);
         return;
       }
       // Fallthrough to share the error with Console entries.
