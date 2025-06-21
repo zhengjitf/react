@@ -204,9 +204,6 @@ export const enableReactTestRendererWarning = true;
 // before removing them in stable in the next Major
 export const disableLegacyMode = true;
 
-// Make <Context> equivalent to <Context.Provider> instead of <Context.Consumer>
-export const enableRenderableContext = true;
-
 // -----------------------------------------------------------------------------
 // Chopping Block
 //
@@ -262,8 +259,5 @@ export const enableAsyncDebugInfo = __EXPERIMENTAL__;
 
 // Track which Fiber(s) schedule render work.
 export const enableUpdaterTracking = __PROFILE__;
-
-// Internal only.
-export const enableDO_NOT_USE_disableStrictPassiveEffect = false;
 
 export const ownerStackLimit = 1e4;
