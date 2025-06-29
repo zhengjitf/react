@@ -9,15 +9,28 @@
 
 /* eslint-disable react-internal/no-production-logging */
 
-import type {ReactComponentInfo} from 'shared/ReactTypes';
+import type {
+  ReactComponentInfo,
+  ReactIOInfo,
+  ReactAsyncInfo,
+} from 'shared/ReactTypes';
 
 import {enableProfilerTimer} from 'shared/ReactFeatureFlags';
+
+import {
+  addValueToProperties,
+  addObjectToProperties,
+} from 'shared/ReactPerformanceTrackProperties';
 
 const supportsUserTiming =
   enableProfilerTimer &&
   typeof console !== 'undefined' &&
-  typeof console.timeStamp === 'function';
+  typeof console.timeStamp === 'function' &&
+  typeof performance !== 'undefined' &&
+  // $FlowFixMe[method-unbinding]
+  typeof performance.measure === 'function';
 
+const IO_TRACK = 'Server Requests ⚛';
 const COMPONENTS_TRACK = 'Server Components ⚛';
 
 export function markAllTracksInOrder() {
@@ -25,6 +38,14 @@ export function markAllTracksInOrder() {
     // Ensure we create the Server Component track groups earlier than the Client Scheduler
     // and Client Components. We can always add the 0 time slot even if it's in the past.
     // That's still considered for ordering.
+    console.timeStamp(
+      'Server Requests Track',
+      0.001,
+      0.001,
+      IO_TRACK,
+      undefined,
+      'primary-light',
+    );
     console.timeStamp(
       'Server Components Track',
       0.001,
@@ -80,17 +101,27 @@ export function logComponentRender(
       isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']';
     const debugTask = componentInfo.debugTask;
     if (__DEV__ && debugTask) {
+      const properties: Array<[string, string]> = [];
+      if (componentInfo.key != null) {
+        addValueToProperties('key', componentInfo.key, properties, 0);
+      }
+      if (componentInfo.props != null) {
+        addObjectToProperties(componentInfo.props, properties, 0);
+      }
       debugTask.run(
         // $FlowFixMe[method-unbinding]
-        console.timeStamp.bind(
-          console,
-          entryName,
-          startTime < 0 ? 0 : startTime,
-          childrenEndTime,
-          trackNames[trackIdx],
-          COMPONENTS_TRACK,
-          color,
-        ),
+        performance.measure.bind(performance, entryName, {
+          start: startTime < 0 ? 0 : startTime,
+          end: childrenEndTime,
+          detail: {
+            devtools: {
+              color: color,
+              track: trackNames[trackIdx],
+              trackGroup: COMPONENTS_TRACK,
+              properties,
+            },
+          },
+        }),
       );
     } else {
       console.timeStamp(
@@ -100,6 +131,59 @@ export function logComponentRender(
         trackNames[trackIdx],
         COMPONENTS_TRACK,
         color,
+      );
+    }
+  }
+}
+
+export function logComponentAborted(
+  componentInfo: ReactComponentInfo,
+  trackIdx: number,
+  startTime: number,
+  endTime: number,
+  childrenEndTime: number,
+  rootEnv: string,
+): void {
+  if (supportsUserTiming) {
+    const env = componentInfo.env;
+    const name = componentInfo.name;
+    const isPrimaryEnv = env === rootEnv;
+    const entryName =
+      isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']';
+    if (__DEV__) {
+      const properties = [
+        [
+          'Aborted',
+          'The stream was aborted before this Component finished rendering.',
+        ],
+      ];
+      if (componentInfo.key != null) {
+        addValueToProperties('key', componentInfo.key, properties, 0);
+      }
+      if (componentInfo.props != null) {
+        addObjectToProperties(componentInfo.props, properties, 0);
+      }
+      performance.measure(entryName, {
+        start: startTime < 0 ? 0 : startTime,
+        end: childrenEndTime,
+        detail: {
+          devtools: {
+            color: 'warning',
+            track: trackNames[trackIdx],
+            trackGroup: COMPONENTS_TRACK,
+            tooltipText: entryName + ' Aborted',
+            properties,
+          },
+        },
+      });
+    } else {
+      console.timeStamp(
+        entryName,
+        startTime < 0 ? 0 : startTime,
+        childrenEndTime,
+        trackNames[trackIdx],
+        COMPONENTS_TRACK,
+        'warning',
       );
     }
   }
@@ -120,12 +204,7 @@ export function logComponentErrored(
     const isPrimaryEnv = env === rootEnv;
     const entryName =
       isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']';
-    if (
-      __DEV__ &&
-      typeof performance !== 'undefined' &&
-      // $FlowFixMe[method-unbinding]
-      typeof performance.measure === 'function'
-    ) {
+    if (__DEV__) {
       const message =
         typeof error === 'object' &&
         error !== null &&
@@ -135,6 +214,12 @@ export function logComponentErrored(
           : // eslint-disable-next-line react-internal/safe-string-coercion
             String(error);
       const properties = [['Error', message]];
+      if (componentInfo.key != null) {
+        addValueToProperties('key', componentInfo.key, properties, 0);
+      }
+      if (componentInfo.props != null) {
+        addObjectToProperties(componentInfo.props, properties, 0);
+      }
       performance.measure(entryName, {
         start: startTime < 0 ? 0 : startTime,
         end: childrenEndTime,
@@ -166,9 +251,13 @@ export function logDedupedComponentRender(
   trackIdx: number,
   startTime: number,
   endTime: number,
+  rootEnv: string,
 ): void {
   if (supportsUserTiming && endTime >= 0 && trackIdx < 10) {
+    const env = componentInfo.env;
     const name = componentInfo.name;
+    const isPrimaryEnv = env === rootEnv;
+    const color = isPrimaryEnv ? 'primary-light' : 'secondary-light';
     const entryName = name + ' [deduped]';
     const debugTask = componentInfo.debugTask;
     if (__DEV__ && debugTask) {
@@ -181,7 +270,7 @@ export function logDedupedComponentRender(
           endTime,
           trackNames[trackIdx],
           COMPONENTS_TRACK,
-          'tertiary-light',
+          color,
         ),
       );
     } else {
@@ -191,7 +280,277 @@ export function logDedupedComponentRender(
         endTime,
         trackNames[trackIdx],
         COMPONENTS_TRACK,
-        'tertiary-light',
+        color,
+      );
+    }
+  }
+}
+
+function getIOColor(
+  functionName: string,
+): 'tertiary-light' | 'tertiary' | 'tertiary-dark' {
+  // Add some color variation to be able to distinguish various sources.
+  switch (functionName.charCodeAt(0) % 3) {
+    case 0:
+      return 'tertiary-light';
+    case 1:
+      return 'tertiary';
+    default:
+      return 'tertiary-dark';
+  }
+}
+
+export function logComponentAwaitAborted(
+  asyncInfo: ReactAsyncInfo,
+  trackIdx: number,
+  startTime: number,
+  endTime: number,
+  rootEnv: string,
+): void {
+  if (supportsUserTiming && endTime > 0) {
+    const env = asyncInfo.env;
+    const name = asyncInfo.awaited.name;
+    const isPrimaryEnv = env === rootEnv;
+    const entryName =
+      'await ' +
+      (isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']');
+    const debugTask = asyncInfo.debugTask || asyncInfo.awaited.debugTask;
+    if (__DEV__ && debugTask) {
+      const properties = [
+        ['Aborted', 'The stream was aborted before this Promise resolved.'],
+      ];
+      debugTask.run(
+        // $FlowFixMe[method-unbinding]
+        performance.measure.bind(performance, entryName, {
+          start: startTime < 0 ? 0 : startTime,
+          end: endTime,
+          detail: {
+            devtools: {
+              color: 'warning',
+              track: trackNames[trackIdx],
+              trackGroup: COMPONENTS_TRACK,
+              properties,
+              tooltipText: entryName + ' Aborted',
+            },
+          },
+        }),
+      );
+    } else {
+      console.timeStamp(
+        entryName,
+        startTime < 0 ? 0 : startTime,
+        endTime,
+        trackNames[trackIdx],
+        COMPONENTS_TRACK,
+        'warning',
+      );
+    }
+  }
+}
+
+export function logComponentAwaitErrored(
+  asyncInfo: ReactAsyncInfo,
+  trackIdx: number,
+  startTime: number,
+  endTime: number,
+  rootEnv: string,
+  error: mixed,
+): void {
+  if (supportsUserTiming && endTime > 0) {
+    const env = asyncInfo.env;
+    const name = asyncInfo.awaited.name;
+    const isPrimaryEnv = env === rootEnv;
+    const entryName =
+      'await ' +
+      (isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']');
+    const debugTask = asyncInfo.debugTask || asyncInfo.awaited.debugTask;
+    if (__DEV__ && debugTask) {
+      const message =
+        typeof error === 'object' &&
+        error !== null &&
+        typeof error.message === 'string'
+          ? // eslint-disable-next-line react-internal/safe-string-coercion
+            String(error.message)
+          : // eslint-disable-next-line react-internal/safe-string-coercion
+            String(error);
+      const properties = [['Rejected', message]];
+      debugTask.run(
+        // $FlowFixMe[method-unbinding]
+        performance.measure.bind(performance, entryName, {
+          start: startTime < 0 ? 0 : startTime,
+          end: endTime,
+          detail: {
+            devtools: {
+              color: 'error',
+              track: trackNames[trackIdx],
+              trackGroup: COMPONENTS_TRACK,
+              properties,
+              tooltipText: entryName + ' Rejected',
+            },
+          },
+        }),
+      );
+    } else {
+      console.timeStamp(
+        entryName,
+        startTime < 0 ? 0 : startTime,
+        endTime,
+        trackNames[trackIdx],
+        COMPONENTS_TRACK,
+        'error',
+      );
+    }
+  }
+}
+
+export function logComponentAwait(
+  asyncInfo: ReactAsyncInfo,
+  trackIdx: number,
+  startTime: number,
+  endTime: number,
+  rootEnv: string,
+  value: mixed,
+): void {
+  if (supportsUserTiming && endTime > 0) {
+    const env = asyncInfo.env;
+    const name = asyncInfo.awaited.name;
+    const isPrimaryEnv = env === rootEnv;
+    const color = getIOColor(name);
+    const entryName =
+      'await ' +
+      (isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']');
+    const debugTask = asyncInfo.debugTask || asyncInfo.awaited.debugTask;
+    if (__DEV__ && debugTask) {
+      const properties: Array<[string, string]> = [];
+      if (typeof value === 'object' && value !== null) {
+        addObjectToProperties(value, properties, 0);
+      } else if (value !== undefined) {
+        addValueToProperties('Resolved', value, properties, 0);
+      }
+      debugTask.run(
+        // $FlowFixMe[method-unbinding]
+        performance.measure.bind(performance, entryName, {
+          start: startTime < 0 ? 0 : startTime,
+          end: endTime,
+          detail: {
+            devtools: {
+              color: color,
+              track: trackNames[trackIdx],
+              trackGroup: COMPONENTS_TRACK,
+              properties,
+            },
+          },
+        }),
+      );
+    } else {
+      console.timeStamp(
+        entryName,
+        startTime < 0 ? 0 : startTime,
+        endTime,
+        trackNames[trackIdx],
+        COMPONENTS_TRACK,
+        color,
+      );
+    }
+  }
+}
+
+export function logIOInfoErrored(
+  ioInfo: ReactIOInfo,
+  rootEnv: string,
+  error: mixed,
+): void {
+  const startTime = ioInfo.start;
+  const endTime = ioInfo.end;
+  if (supportsUserTiming && endTime >= 0) {
+    const name = ioInfo.name;
+    const env = ioInfo.env;
+    const isPrimaryEnv = env === rootEnv;
+    const entryName =
+      isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']';
+    const debugTask = ioInfo.debugTask;
+    if (__DEV__ && debugTask) {
+      const message =
+        typeof error === 'object' &&
+        error !== null &&
+        typeof error.message === 'string'
+          ? // eslint-disable-next-line react-internal/safe-string-coercion
+            String(error.message)
+          : // eslint-disable-next-line react-internal/safe-string-coercion
+            String(error);
+      const properties = [['Rejected', message]];
+      debugTask.run(
+        // $FlowFixMe[method-unbinding]
+        performance.measure.bind(performance, entryName, {
+          start: startTime < 0 ? 0 : startTime,
+          end: endTime,
+          detail: {
+            devtools: {
+              color: 'error',
+              track: IO_TRACK,
+              properties,
+              tooltipText: entryName + ' Rejected',
+            },
+          },
+        }),
+      );
+    } else {
+      console.timeStamp(
+        entryName,
+        startTime < 0 ? 0 : startTime,
+        endTime,
+        IO_TRACK,
+        undefined,
+        'error',
+      );
+    }
+  }
+}
+
+export function logIOInfo(
+  ioInfo: ReactIOInfo,
+  rootEnv: string,
+  value: mixed,
+): void {
+  const startTime = ioInfo.start;
+  const endTime = ioInfo.end;
+  if (supportsUserTiming && endTime >= 0) {
+    const name = ioInfo.name;
+    const env = ioInfo.env;
+    const isPrimaryEnv = env === rootEnv;
+    const entryName =
+      isPrimaryEnv || env === undefined ? name : name + ' [' + env + ']';
+    const debugTask = ioInfo.debugTask;
+    const color = getIOColor(name);
+    if (__DEV__ && debugTask) {
+      const properties: Array<[string, string]> = [];
+      if (typeof value === 'object' && value !== null) {
+        addObjectToProperties(value, properties, 0);
+      } else if (value !== undefined) {
+        addValueToProperties('Resolved', value, properties, 0);
+      }
+      debugTask.run(
+        // $FlowFixMe[method-unbinding]
+        performance.measure.bind(performance, entryName, {
+          start: startTime < 0 ? 0 : startTime,
+          end: endTime,
+          detail: {
+            devtools: {
+              color: color,
+              track: IO_TRACK,
+              properties,
+            },
+          },
+        }),
+      );
+    } else {
+      console.timeStamp(
+        entryName,
+        startTime < 0 ? 0 : startTime,
+        endTime,
+        IO_TRACK,
+        undefined,
+        color,
       );
     }
   }
