@@ -59,7 +59,7 @@ function collectStackTrace(
   for (let i = framesToSkip; i < structuredStackTrace.length; i++) {
     const callSite = structuredStackTrace[i];
     let name = callSite.getFunctionName() || '<anonymous>';
-    if (name === 'react-stack-bottom-frame') {
+    if (name.includes('react_stack_bottom_frame')) {
       // Skip everything after the bottom frame since it'll be internals.
       break;
     } else if (callSite.isNative()) {
@@ -126,10 +126,22 @@ function collectStackTrace(
 const frameRegExp =
   /^ {3} at (?:(.+) \((?:(.+):(\d+):(\d+)|\<anonymous\>)\)|(?:async )?(.+):(\d+):(\d+)|\<anonymous\>)$/;
 
+// DEV-only cache of parsed and filtered stack frames.
+const stackTraceCache: WeakMap<Error, ReactStackTrace> = __DEV__
+  ? new WeakMap()
+  : (null: any);
+
 export function parseStackTrace(
   error: Error,
   skipFrames: number,
 ): ReactStackTrace {
+  // We can only get structured data out of error objects once. So we cache the information
+  // so we can get it again each time. It also helps performance when the same error is
+  // referenced more than once.
+  const existing = stackTraceCache.get(error);
+  if (existing !== undefined) {
+    return existing;
+  }
   // We override Error.prepareStackTrace with our own version that collects
   // the structured data. We need more information than the raw stack gives us
   // and we need to ensure that we don't get the source mapped version.
@@ -148,6 +160,7 @@ export function parseStackTrace(
   if (collectedStackTrace !== null) {
     const result = collectedStackTrace;
     collectedStackTrace = null;
+    stackTraceCache.set(error, result);
     return result;
   }
 
@@ -161,7 +174,7 @@ export function parseStackTrace(
     // don't want/need.
     stack = stack.slice(29);
   }
-  let idx = stack.indexOf('react-stack-bottom-frame');
+  let idx = stack.indexOf('react_stack_bottom_frame');
   if (idx !== -1) {
     idx = stack.lastIndexOf('\n', idx);
   }
@@ -191,5 +204,6 @@ export function parseStackTrace(
     const col = +(parsed[4] || parsed[7]);
     parsedFrames.push([name, filename, line, col, 0, 0]);
   }
+  stackTraceCache.set(error, parsedFrames);
   return parsedFrames;
 }

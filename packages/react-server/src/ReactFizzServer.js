@@ -21,6 +21,7 @@ import type {
   ReactFormState,
   ReactComponentInfo,
   ReactDebugInfo,
+  ReactAsyncInfo,
   ViewTransitionProps,
   ActivityProps,
   SuspenseProps,
@@ -107,7 +108,7 @@ import {
   getMaskedContext,
   processChildContext,
   emptyContextObject,
-} from './ReactFizzContext';
+} from './ReactFizzLegacyContext';
 import {
   readContext,
   rootContextSnapshot,
@@ -163,7 +164,6 @@ import {
   REACT_FRAGMENT_TYPE,
   REACT_FORWARD_REF_TYPE,
   REACT_MEMO_TYPE,
-  REACT_PROVIDER_TYPE,
   REACT_CONTEXT_TYPE,
   REACT_CONSUMER_TYPE,
   REACT_SCOPE_TYPE,
@@ -178,10 +178,10 @@ import {
   enableScopeAPI,
   enablePostpone,
   enableHalt,
-  enableRenderableContext,
-  disableDefaultPropsExceptForClasses,
   enableAsyncIterableChildren,
   enableViewTransition,
+  enableFizzBlockingRender,
+  enableAsyncDebugInfo,
 } from 'shared/ReactFeatureFlags';
 
 import assign from 'shared/assign';
@@ -417,6 +417,41 @@ type Preamble = PreambleState;
 // paint.
 // 500 * 1024 / 8 * .8 * 0.5 / 2
 const DEFAULT_PROGRESSIVE_CHUNK_SIZE = 12800;
+
+function getBlockingRenderMaxSize(request: Request): number {
+  // We want to make sure that we can block the reveal of a well designed complete
+  // shell but if you have constructed a too large shell (e.g. by not adding any
+  // Suspense boundaries) then that might take too long to render. We shouldn't
+  // punish users (or overzealous metrics tracking) in that scenario.
+  // There's a trade off here. If this limit is too low then you can't fit a
+  // reasonably well built UI within it without getting errors. If it's too high
+  // then things that accidentally fall below it might take too long to load.
+  // Web Vitals target 1.8 seconds for first paint and our goal to have the limit
+  // be fast enough to hit that. For this argument we assume that most external
+  // resources are already cached because it's a return visit, or inline styles.
+  // If it's not, then it's highly unlikely that any render blocking instructions
+  // we add has any impact what so ever on the paint.
+  // Assuming a first byte of about 600ms which is kind of bad but common with a
+  // decent static host. If it's longer e.g. due to dynamic rendering, then you
+  // are going to bound by dynamic production of the content and you're better off
+  // with Suspense boundaries anyway. This number doesn't matter much. Then you
+  // have about 1.2 seconds left for bandwidth. On 3G that gives you about 112.5kb
+  // worth of data. That's worth about 10x in terms of uncompressed bytes. Then we
+  // half that just to account for longer latency, slower bandwidth and CPU processing.
+  // Now we're down to about 500kb. In fact, looking at metrics we've collected with
+  // rel="expect" examples and other documents, the impact on documents smaller than
+  // that is within the noise. That's because there's enough happening within that
+  // start up to not make HTML streaming not significantly better.
+  // Content above the fold tends to be about 100-200kb tops. Therefore 500kb should
+  // be enough head room for a good loading state. After that you should use
+  // Suspense or SuspenseList to improve it.
+  // Since this is highly related to the reason you would adjust the
+  // progressiveChunkSize option, and always has to be higher, we define this limit
+  // in terms of it. So if you want to increase the limit because you have high
+  // bandwidth users, then you can adjust it up. If you are concerned about even
+  // slower bandwidth then you can adjust it down.
+  return request.progressiveChunkSize * 40; // 512kb by default.
+}
 
 function isEligibleForOutlining(
   request: Request,
@@ -949,6 +984,46 @@ function getCurrentStackInDEV(): string {
 
 function getStackFromNode(stackNode: ComponentStackNode): string {
   return getStackByComponentStackNode(stackNode);
+}
+
+function pushHaltedAwaitOnComponentStack(
+  task: Task,
+  debugInfo: void | null | ReactDebugInfo,
+): void {
+  if (!__DEV__) {
+    // eslint-disable-next-line react-internal/prod-error-codes
+    throw new Error(
+      'pushHaltedAwaitOnComponentStack should never be called in production. This is a bug in React.',
+    );
+  }
+  if (debugInfo != null) {
+    for (let i = debugInfo.length - 1; i >= 0; i--) {
+      const info = debugInfo[i];
+      if (typeof info.name === 'string') {
+        // This is a Server Component. Any awaits in previous Server Components already resolved.
+        break;
+      }
+      if (typeof info.time === 'number') {
+        // This had an end time. Any awaits before this must have already resolved.
+        break;
+      }
+      if (info.awaited != null) {
+        const asyncInfo: ReactAsyncInfo = (info: any);
+        const bestStack =
+          asyncInfo.debugStack == null ? asyncInfo.awaited : asyncInfo;
+        if (bestStack.debugStack !== undefined) {
+          task.componentStack = {
+            parent: task.componentStack,
+            type: asyncInfo,
+            owner: bestStack.owner,
+            stack: bestStack.debugStack,
+          };
+          task.debugTask = (bestStack.debugTask: any);
+          break;
+        }
+      }
+    }
+  }
 }
 
 function pushServerComponentStack(
@@ -1799,7 +1874,7 @@ function renderSuspenseListRows(
   task: Task,
   keyPath: KeyNode,
   rows: Array<ReactNodeList>,
-  revealOrder: 'forwards' | 'backwards',
+  revealOrder: 'forwards' | 'backwards' | 'unstable_legacy-backwards',
 ): void {
   // This is a fork of renderChildrenArray that's aware of tracking rows.
   const prevKeyPath = task.keyPath;
@@ -1827,7 +1902,11 @@ function renderSuspenseListRows(
         // Since we are going to resume into a slot whose order was already
         // determined by the prerender, we can safely resume it even in reverse
         // render order.
-        const i = revealOrder !== 'backwards' ? n : totalChildren - 1 - n;
+        const i =
+          revealOrder !== 'backwards' &&
+          revealOrder !== 'unstable_legacy-backwards'
+            ? n
+            : totalChildren - 1 - n;
         const node = rows[i];
         task.row = previousSuspenseListRow = createSuspenseListRow(
           previousSuspenseListRow,
@@ -1852,7 +1931,11 @@ function renderSuspenseListRows(
         // Since we are going to resume into a slot whose order was already
         // determined by the prerender, we can safely resume it even in reverse
         // render order.
-        const i = revealOrder !== 'backwards' ? n : totalChildren - 1 - n;
+        const i =
+          revealOrder !== 'backwards' &&
+          revealOrder !== 'unstable_legacy-backwards'
+            ? n
+            : totalChildren - 1 - n;
         const node = rows[i];
         if (__DEV__) {
           warnForMissingKey(request, task, node);
@@ -1869,7 +1952,10 @@ function renderSuspenseListRows(
     }
   } else {
     task = ((task: any): RenderTask); // Refined
-    if (revealOrder !== 'backwards') {
+    if (
+      revealOrder !== 'backwards' &&
+      revealOrder !== 'unstable_legacy-backwards'
+    ) {
       // Forwards direction
       for (let i = 0; i < totalChildren; i++) {
         const node = rows[i];
@@ -1973,7 +2059,11 @@ function renderSuspenseList(
   const revealOrder: SuspenseListRevealOrder = props.revealOrder;
   // TODO: Support tail hidden/collapsed modes.
   // const tailMode: SuspenseListTailMode = props.tail;
-  if (revealOrder === 'forwards' || revealOrder === 'backwards') {
+  if (
+    revealOrder === 'forwards' ||
+    revealOrder === 'backwards' ||
+    revealOrder === 'unstable_legacy-backwards'
+  ) {
     // For ordered reveal, we need to produce rows from the children.
     if (isArray(children)) {
       renderSuspenseListRows(request, task, keyPath, children, revealOrder);
@@ -2309,12 +2399,7 @@ export function resolveClassComponentProps(
 
   // Resolve default props.
   const defaultProps = Component.defaultProps;
-  if (
-    defaultProps &&
-    // If disableDefaultPropsExceptForClasses is true, we always resolve
-    // default props here, rather than in the JSX runtime.
-    disableDefaultPropsExceptForClasses
-  ) {
+  if (defaultProps) {
     // We may have already copied the props object above to remove ref. If so,
     // we can modify that. Otherwise, copy the props object with Object.assign.
     if (newProps === baseProps) {
@@ -2363,7 +2448,6 @@ const didWarnAboutContextTypes: {[string]: boolean} = {};
 const didWarnAboutContextTypeOnFunctionComponent: {[string]: boolean} = {};
 const didWarnAboutGetDerivedStateOnFunctionComponent: {[string]: boolean} = {};
 let didWarnAboutReassigningProps = false;
-const didWarnAboutDefaultPropsOnFunctionComponent: {[string]: boolean} = {};
 let didWarnAboutGenerators = false;
 let didWarnAboutMaps = false;
 
@@ -2520,22 +2604,6 @@ function validateFunctionComponentInDev(Component: any): void {
       );
     }
 
-    if (
-      !disableDefaultPropsExceptForClasses &&
-      Component.defaultProps !== undefined
-    ) {
-      const componentName = getComponentNameFromType(Component) || 'Unknown';
-
-      if (!didWarnAboutDefaultPropsOnFunctionComponent[componentName]) {
-        console.error(
-          '%s: Support for defaultProps will be removed from function components ' +
-            'in a future major release. Use JavaScript default parameters instead.',
-          componentName,
-        );
-        didWarnAboutDefaultPropsOnFunctionComponent[componentName] = true;
-      }
-    }
-
     if (typeof Component.getDerivedStateFromProps === 'function') {
       const componentName = getComponentNameFromType(Component) || 'Unknown';
 
@@ -2563,29 +2631,6 @@ function validateFunctionComponentInDev(Component: any): void {
       }
     }
   }
-}
-
-function resolveDefaultPropsOnNonClassComponent(
-  Component: any,
-  baseProps: Object,
-): Object {
-  if (disableDefaultPropsExceptForClasses) {
-    // Support for defaultProps is removed in React 19 for all types
-    // except classes.
-    return baseProps;
-  }
-  if (Component && Component.defaultProps) {
-    // Resolve default props. Taken from ReactElement
-    const props = assign({}, baseProps);
-    const defaultProps = Component.defaultProps;
-    for (const propName in defaultProps) {
-      if (props[propName] === undefined) {
-        props[propName] = defaultProps[propName];
-      }
-    }
-    return props;
-  }
-  return baseProps;
 }
 
 function renderForwardRef(
@@ -2645,11 +2690,7 @@ function renderMemo(
   ref: any,
 ): void {
   const innerType = type.type;
-  const resolvedProps = resolveDefaultPropsOnNonClassComponent(
-    innerType,
-    props,
-  );
-  renderElement(request, task, keyPath, innerType, resolvedProps, ref);
+  renderElement(request, task, keyPath, innerType, props, ref);
 }
 
 function renderContextConsumer(
@@ -2729,11 +2770,7 @@ function renderLazyComponent(
     // eslint-disable-next-line no-throw-literal
     throw null;
   }
-  const resolvedProps = resolveDefaultPropsOnNonClassComponent(
-    Component,
-    props,
-  );
-  renderElement(request, task, keyPath, Component, resolvedProps, ref);
+  renderElement(request, task, keyPath, Component, props, ref);
 }
 
 function renderActivity(
@@ -2908,38 +2945,16 @@ function renderElement(
         renderMemo(request, task, keyPath, type, props, ref);
         return;
       }
-      case REACT_PROVIDER_TYPE: {
-        if (!enableRenderableContext) {
-          const context: ReactContext<any> = (type: any)._context;
-          renderContextProvider(request, task, keyPath, context, props);
-          return;
-        }
-        // Fall through
-      }
       case REACT_CONTEXT_TYPE: {
-        if (enableRenderableContext) {
-          const context = type;
-          renderContextProvider(request, task, keyPath, context, props);
-          return;
-        } else {
-          let context: ReactContext<any> = (type: any);
-          if (__DEV__) {
-            if ((context: any)._context !== undefined) {
-              context = (context: any)._context;
-            }
-          }
-          renderContextConsumer(request, task, keyPath, context, props);
-          return;
-        }
+        const context = type;
+        renderContextProvider(request, task, keyPath, context, props);
+        return;
       }
       case REACT_CONSUMER_TYPE: {
-        if (enableRenderableContext) {
-          const context: ReactContext<any> = (type: ReactConsumerType<any>)
-            ._context;
-          renderContextConsumer(request, task, keyPath, context, props);
-          return;
-        }
-        // Fall through
+        const context: ReactContext<any> = (type: ReactConsumerType<any>)
+          ._context;
+        renderContextConsumer(request, task, keyPath, context, props);
+        return;
       }
       case REACT_LAZY_TYPE: {
         renderLazyComponent(request, task, keyPath, type, props, ref);
@@ -3072,6 +3087,9 @@ function replayElement(
           if (task.node === currentNode) {
             // This same element suspended so we need to pop the replay we just added.
             task.replay = replay;
+          } else {
+            // We finished rendering this node, so now we can consume this slot.
+            replayNodes.splice(i, 1);
           }
           throw x;
         }
@@ -4100,6 +4118,8 @@ function renderNode(
   const segment = task.blockedSegment;
   if (segment === null) {
     // Replay
+    task = ((task: any): ReplayTask); // Refined
+    const previousReplaySet: ReplaySet = task.replay;
     try {
       return renderNodeDestructive(request, task, node, childIndex);
     } catch (thrownValue) {
@@ -4139,6 +4159,7 @@ function renderNode(
           task.keyPath = previousKeyPath;
           task.treeContext = previousTreeContext;
           task.componentStack = previousComponentStack;
+          task.replay = previousReplaySet;
           if (__DEV__) {
             task.debugTask = previousDebugTask;
           }
@@ -4172,6 +4193,7 @@ function renderNode(
           task.keyPath = previousKeyPath;
           task.treeContext = previousTreeContext;
           task.componentStack = previousComponentStack;
+          task.replay = previousReplaySet;
           if (__DEV__) {
             task.debugTask = previousDebugTask;
           }
@@ -4578,6 +4600,22 @@ function abortTask(task: Task, request: Request, error: mixed): void {
   }
 
   const errorInfo = getThrownInfo(task.componentStack);
+  if (__DEV__ && enableAsyncDebugInfo) {
+    // If the task is not rendering, then this is an async abort. Conceptually it's as if
+    // the abort happened inside the async gap. The abort reason's stack frame won't have that
+    // on the stack so instead we use the owner stack and debug task of any halted async debug info.
+    const node: any = task.node;
+    if (node !== null && typeof node === 'object') {
+      // Push a fake component stack frame that represents the await.
+      pushHaltedAwaitOnComponentStack(task, node._debugInfo);
+      /*
+      if (task.thenableState !== null) {
+        // TODO: If we were stalled inside use() of a Client Component then we should
+        // rerender to get the stack trace from the use() call.
+      }
+      */
+    }
+  }
 
   if (boundary === null) {
     if (request.status !== CLOSING && request.status !== CLOSED) {
@@ -4597,7 +4635,12 @@ function abortTask(task: Task, request: Request, error: mixed): void {
           if (trackedPostpones !== null && segment !== null) {
             // We are prerendering. We don't want to fatal when the shell postpones
             // we just need to mark it as postponed.
-            logPostpone(request, postponeInstance.message, errorInfo, null);
+            logPostpone(
+              request,
+              postponeInstance.message,
+              errorInfo,
+              task.debugTask,
+            );
             trackPostpone(request, trackedPostpones, task, segment);
             finishedTask(request, null, task.row, segment);
           } else {
@@ -4605,8 +4648,8 @@ function abortTask(task: Task, request: Request, error: mixed): void {
               'The render was aborted with postpone when the shell is incomplete. Reason: ' +
                 postponeInstance.message,
             );
-            logRecoverableError(request, fatal, errorInfo, null);
-            fatalError(request, fatal, errorInfo, null);
+            logRecoverableError(request, fatal, errorInfo, task.debugTask);
+            fatalError(request, fatal, errorInfo, task.debugTask);
           }
         } else if (
           enableHalt &&
@@ -4616,12 +4659,12 @@ function abortTask(task: Task, request: Request, error: mixed): void {
           const trackedPostpones = request.trackedPostpones;
           // We are aborting a prerender and must treat the shell as halted
           // We log the error but we still resolve the prerender
-          logRecoverableError(request, error, errorInfo, null);
+          logRecoverableError(request, error, errorInfo, task.debugTask);
           trackPostpone(request, trackedPostpones, task, segment);
           finishedTask(request, null, task.row, segment);
         } else {
-          logRecoverableError(request, error, errorInfo, null);
-          fatalError(request, error, errorInfo, null);
+          logRecoverableError(request, error, errorInfo, task.debugTask);
+          fatalError(request, error, errorInfo, task.debugTask);
         }
         return;
       } else {
@@ -4638,7 +4681,12 @@ function abortTask(task: Task, request: Request, error: mixed): void {
             error.$$typeof === REACT_POSTPONE_TYPE
           ) {
             const postponeInstance: Postpone = (error: any);
-            logPostpone(request, postponeInstance.message, errorInfo, null);
+            logPostpone(
+              request,
+              postponeInstance.message,
+              errorInfo,
+              task.debugTask,
+            );
             // TODO: Figure out a better signal than a magic digest value.
             errorDigest = 'POSTPONE';
           } else {
@@ -4676,11 +4724,16 @@ function abortTask(task: Task, request: Request, error: mixed): void {
             error.$$typeof === REACT_POSTPONE_TYPE
           ) {
             const postponeInstance: Postpone = (error: any);
-            logPostpone(request, postponeInstance.message, errorInfo, null);
+            logPostpone(
+              request,
+              postponeInstance.message,
+              errorInfo,
+              task.debugTask,
+            );
           } else {
             // We are aborting a prerender and must halt this boundary.
             // We treat this like other postpones during prerendering
-            logRecoverableError(request, error, errorInfo, null);
+            logRecoverableError(request, error, errorInfo, task.debugTask);
           }
           trackPostpone(request, trackedPostpones, task, segment);
           // If this boundary was still pending then we haven't already cancelled its fallbacks.
@@ -4703,7 +4756,12 @@ function abortTask(task: Task, request: Request, error: mixed): void {
         error.$$typeof === REACT_POSTPONE_TYPE
       ) {
         const postponeInstance: Postpone = (error: any);
-        logPostpone(request, postponeInstance.message, errorInfo, null);
+        logPostpone(
+          request,
+          postponeInstance.message,
+          errorInfo,
+          task.debugTask,
+        );
         if (request.trackedPostpones !== null && segment !== null) {
           trackPostpone(request, request.trackedPostpones, task, segment);
           finishedTask(request, task.blockedBoundary, task.row, segment);
@@ -4719,7 +4777,12 @@ function abortTask(task: Task, request: Request, error: mixed): void {
         // TODO: Figure out a better signal than a magic digest value.
         errorDigest = 'POSTPONE';
       } else {
-        errorDigest = logRecoverableError(request, error, errorInfo, null);
+        errorDigest = logRecoverableError(
+          request,
+          error,
+          errorInfo,
+          task.debugTask,
+        );
       }
       boundary.status = CLIENT_RENDERED;
       encodeErrorForBoundary(boundary, errorDigest, error, errorInfo, true);
@@ -4867,7 +4930,11 @@ function queueCompletedSegment(
     const childSegment = segment.children[0];
     childSegment.id = segment.id;
     childSegment.parentFlushed = true;
-    if (childSegment.status === COMPLETED) {
+    if (
+      childSegment.status === COMPLETED ||
+      childSegment.status === ABORTED ||
+      childSegment.status === ERRORED
+    ) {
       queueCompletedSegment(boundary, childSegment);
     }
   } else {
@@ -4938,7 +5005,7 @@ function finishedTask(
         // Our parent segment already flushed, so we need to schedule this segment to be emitted.
         // If it is a segment that was aborted, we'll write other content instead so we don't need
         // to emit it.
-        if (segment.status === COMPLETED) {
+        if (segment.status === COMPLETED || segment.status === ABORTED) {
           queueCompletedSegment(boundary, segment);
         }
       }
@@ -5007,7 +5074,7 @@ function finishedTask(
         // Our parent already flushed, so we need to schedule this segment to be emitted.
         // If it is a segment that was aborted, we'll write other content instead so we don't need
         // to emit it.
-        if (segment.status === COMPLETED) {
+        if (segment.status === COMPLETED || segment.status === ABORTED) {
           queueCompletedSegment(boundary, segment);
           const completedSegments = boundary.completedSegments;
           if (completedSegments.length === 1) {
@@ -5461,9 +5528,15 @@ function flushPreamble(
   destination: Destination,
   rootSegment: Segment,
   preambleSegments: Array<Array<Segment>>,
+  skipBlockingShell: boolean,
 ) {
   // The preamble is ready.
-  writePreambleStart(destination, request.resumableState, request.renderState);
+  writePreambleStart(
+    destination,
+    request.resumableState,
+    request.renderState,
+    skipBlockingShell,
+  );
   for (let i = 0; i < preambleSegments.length; i++) {
     const segments = preambleSegments[i];
     for (let j = 0; j < segments.length; j++) {
@@ -5517,6 +5590,9 @@ function flushSubtree(
         r = writeChunkAndReturn(destination, chunks[chunkIdx]);
       }
       return r;
+    }
+    case ABORTED: {
+      return true;
     }
     default: {
       throw new Error(
@@ -5873,11 +5949,32 @@ function flushCompletedQueues(
 
       flushedByteSize = request.byteSize; // Start counting bytes
       // TODO: Count the size of the preamble chunks too.
+      let skipBlockingShell = false;
+      if (enableFizzBlockingRender) {
+        const blockingRenderMaxSize = getBlockingRenderMaxSize(request);
+        if (flushedByteSize > blockingRenderMaxSize) {
+          skipBlockingShell = true;
+          const maxSizeKb = Math.round(blockingRenderMaxSize / 1000);
+          const error = new Error(
+            'This rendered a large document (>' +
+              maxSizeKb +
+              ' kB) without any Suspense ' +
+              'boundaries around most of it. That can delay initial paint longer than ' +
+              'necessary. To improve load performance, add a <Suspense> or <SuspenseList> ' +
+              'around the content you expect to be below the header or below the fold. ' +
+              'In the meantime, the content will deopt to paint arbitrary incomplete ' +
+              'pieces of HTML.',
+          );
+          const errorInfo: ThrownInfo = {};
+          logRecoverableError(request, error, errorInfo, null);
+        }
+      }
       flushPreamble(
         request,
         destination,
         completedRootSegment,
         completedPreambleSegments,
+        skipBlockingShell,
       );
       flushSegment(request, destination, completedRootSegment, null);
       request.completedRootSegment = null;
